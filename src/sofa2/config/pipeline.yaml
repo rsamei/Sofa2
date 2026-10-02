@@ -1,0 +1,55 @@
+# Pipeline settings shared by SOFA-2 and the original SOFA. These are implementation choices,
+# not published thresholds; each one is documented in the README.
+
+windows:
+  # Daily windows are consecutive 24-hour blocks from ICU admission (day 1 = [intime, intime+24h)).
+  daily_hours: 24
+  # Hourly output: each hour is scored on the worst values over the preceding 24 hours,
+  # including the current hour.
+  hourly_lookback_hours: 24
+
+# Laboratory values measured up to this many hours before ICU admission count in the first hour.
+pre_icu_lab_hours: 6
+pre_icu_lab_variables: [bilirubin, creatinine, platelets, potassium, ph, bicarbonate, pao2, fio2]
+
+missing:
+  # locf:   carry forward the last observed value if it is at most `locf_max_hours` older than
+  #         the window start; otherwise score 0. Flags: carried_forward / imputed_normal.
+  # normal: score a missing component as 0 (imputed_normal).
+  # none:   leave a missing component empty; the total is then empty too.
+  # On the first day nothing earlier exists, so a missing component scores 0 (Table 2 footnote b).
+  strategy: locf
+  locf_max_hours: 24
+
+oxygenation:
+  # A blood gas without its own FiO2 takes the last FiO2 charted up to this many minutes before.
+  pao2_fio2_lookback_minutes: 240
+  # SpO2 is paired with the last FiO2 charted up to this many minutes before.
+  spo2_fio2_lookback_minutes: 60
+  # FiO2 is a fraction; values outside this range are dropped.
+  fio2_min: 0.21
+  fio2_max: 1.0
+
+sedation:
+  # A patient is sedated while a continuous infusion of one of these drugs runs. The last GCS
+  # before sedation is carried through the sedation with no time cap.
+  drugs: [propofol, midazolam, lorazepam, dexmedetomidine]
+
+urine_output:
+  # Each urine chart covers the time since the previous chart (the first: since ICU admission).
+  # A trailing window is scored only when the summed collection intervals of its charts cover
+  # the whole window.
+  require_full_coverage: true
+  # Anuria needs at least this many charts in the window.
+  anuria_min_charts: 2
+
+weight:
+  # Weight at a time is the last weight measured by then; before the first measurement the
+  # first measurement of the stay is used, then stays.weight_kg.
+  min_kg: null
+  max_kg: null
+
+infusions:
+  # Rows of the same drug are merged into one continuous infusion when the next row starts within
+  # this many minutes of the previous end.
+  merge_gap_minutes: 1

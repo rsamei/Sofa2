@@ -1,0 +1,97 @@
+# Original SOFA scoring rules.
+# Source: Vincent JL, Moreno R, Takala J, et al. The SOFA (Sepsis-related Organ Failure
+# Assessment) score to describe organ dysfunction/failure. Intensive Care Med. 1996;22:707-710.
+# Table 3 and its footnote.
+#
+# Band format as in sofa2.yaml. Canonical units: mg/dL, x10^3/uL, mmHg, ug/kg/min, mL/day.
+#
+# Range convention: Table 3 gives ranges written to one decimal (eg, bilirubin 1.2-1.9,
+# 2.0-5.9). They are read as half-open intervals [1.2, 2.0), [2.0, 6.0), ... so that every value
+# falls in exactly one band. Two boundary values are not covered by the printed ranges:
+# bilirubin 12.0 (Table 3: "6.0-11.9" and ">12.0") and creatinine 5.0 ("3.5-4.9" and ">5.0").
+# Both are scored 4 here (op ">="). Change the op to ">" to score them 3.
+
+score: sofa1
+source: "Vincent et al., Intensive Care Med 1996;22:707-710, Table 3"
+
+brain:
+  # Table 3: GCS 15 -> 0; 13-14 -> 1; 10-12 -> 2; 6-9 -> 3; < 6 -> 4.
+  gcs_total_bands:
+    - {points: 1, op: "<=", value: 14}
+    - {points: 2, op: "<=", value: 12}
+    - {points: 3, op: "<=", value: 9}
+    - {points: 4, op: "<", value: 6}
+  # Table 3 has no rule for an incomplete GCS; no motor-only substitute is used.
+  use_motor_when_unassessable: false
+  # Vincent 1996 leaves open whether the actual or the assumed GCS (in the absence of sedation)
+  # is used. The pipeline uses the same pre-sedation carry as SOFA-2 for comparability.
+  carry_presedation_gcs: true
+
+respiratory:
+  # Table 3: < 400 -> 1; < 300 -> 2; < 200 with respiratory support -> 3;
+  # < 100 with respiratory support -> 4.
+  pf_bands:
+    - {points: 1, op: "<", value: 400}
+    - {points: 2, op: "<", value: 300}
+    - {points: 3, op: "<", value: 200, requires_support: true}
+    - {points: 4, op: "<", value: 100, requires_support: true}
+  max_points_without_support: 2
+  allow_full_score_without_support: false
+  # Table 3 has no SpO2:FiO2 rule.
+  use_sf_ratio: false
+  # "Respiratory support" is not defined in Table 3; mechanical ventilation including CPAP and
+  # noninvasive ventilation is used.
+  support_types: [imv, niv, cpap, bipap, home_vent]
+  transient_minutes: 0
+
+cardiovascular:
+  # Table 3: MAP < 70 mmHg -> 1.
+  map_bands:
+    - {points: 1, op: "<", value: 70}
+  # Table 3 (ug/kg/min): dopamine <= 5 or dobutamine (any dose) -> 2;
+  # dopamine > 5 or epinephrine <= 0.1 or norepinephrine <= 0.1 -> 3;
+  # dopamine > 15 or epinephrine > 0.1 or norepinephrine > 0.1 -> 4.
+  drug_bands:
+    dopamine:
+      - {points: 2, op: ">", value: 0}
+      - {points: 3, op: ">", value: 5}
+      - {points: 4, op: ">", value: 15}
+    dobutamine:
+      - {points: 2, op: ">", value: 0}
+    epinephrine:
+      - {points: 3, op: ">", value: 0}
+      - {points: 4, op: ">", value: 0.1}
+    norepinephrine:
+      - {points: 3, op: ">", value: 0}
+      - {points: 4, op: ">", value: 0.1}
+  # Table 3 footnote: adrenergic agents administered for at least 1 h.
+  min_infusion_minutes: 60
+
+liver:
+  # Table 3: 1.2-1.9 -> 1; 2.0-5.9 -> 2; 6.0-11.9 -> 3; > 12.0 -> 4 (mg/dL).
+  bilirubin_bands:
+    - {points: 1, op: ">=", value: 1.2}
+    - {points: 2, op: ">=", value: 2.0}
+    - {points: 3, op: ">=", value: 6.0}
+    - {points: 4, op: ">=", value: 12.0}
+
+kidney:
+  # Table 3: 1.2-1.9 -> 1; 2.0-3.4 -> 2; 3.5-4.9 -> 3; > 5.0 -> 4 (mg/dL).
+  creatinine_bands:
+    - {points: 1, op: ">=", value: 1.2}
+    - {points: 2, op: ">=", value: 2.0}
+    - {points: 3, op: ">=", value: 3.5}
+    - {points: 4, op: ">=", value: 5.0}
+  # Table 3: urine output < 500 mL/day -> 3; < 200 mL/day -> 4 (24-hour volume).
+  urine_output_daily_bands:
+    - {points: 3, op: "<", value: 500}
+    - {points: 4, op: "<", value: 200}
+  urine_output_window_hours: 24
+
+hemostasis:
+  # Table 3: < 150 -> 1; < 100 -> 2; < 50 -> 3; < 20 -> 4 (x10^3/mm^3).
+  platelet_bands:
+    - {points: 1, op: "<", value: 150}
+    - {points: 2, op: "<", value: 100}
+    - {points: 3, op: "<", value: 50}
+    - {points: 4, op: "<", value: 20}

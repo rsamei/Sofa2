@@ -1,0 +1,151 @@
+# SOFA-2 scoring rules.
+# Source: Ranzani OT, Singer M, Salluh JIF, et al. Development and Validation of the
+# Sequential Organ Failure Assessment (SOFA)-2 Score. JAMA. 2025. Table 2 and footnotes a-q.
+#
+# Band format: a list of {points, op, value}. A value scores the highest `points` whose
+# condition `value <op> threshold` holds; if none holds it scores 0. Ops: <, <=, >, >=.
+# Canonical units: mg/dL (bilirubin, creatinine), x10^3/uL (platelets), mmHg (MAP,
+# PaO2:FiO2), ug/kg/min (catecholamine and dopamine infusions), mL/kg/h (urine output).
+
+score: sofa2
+source: "Ranzani et al., JAMA 2025, Table 2"
+
+brain:
+  # Table 2: GCS 15 -> 0; 13-14 -> 1; 9-12 -> 2; 6-8 -> 3; 3-5 -> 4.
+  gcs_total_bands:
+    - {points: 1, op: "<=", value: 14}
+    - {points: 2, op: "<=", value: 12}
+    - {points: 3, op: "<=", value: 8}
+    - {points: 4, op: "<=", value: 5}
+  # Footnote d: when the 3 GCS domains cannot be evaluated, use the best motor response.
+  # Table 2 parentheticals: obeys (thumbs-up, fist, peace sign) M6 -> 0; localizing M5 -> 1;
+  # withdrawal M4 -> 2; flexion M3 -> 3; extension M2 or no response M1 -> 4.
+  use_motor_when_unassessable: true
+  gcs_motor_bands:
+    - {points: 1, op: "<=", value: 5}
+    - {points: 2, op: "<=", value: 4}
+    - {points: 3, op: "<=", value: 3}
+    - {points: 4, op: "<=", value: 2}
+  # Footnote e: drug treatment for delirium scores at least 1 point, even if GCS is 15.
+  delirium_min_points: 1
+  # Drugs counted as delirium treatment (paper cites the PADIS guideline; list agreed with the
+  # package owner; dexmedetomidine is excluded because it is a sedative).
+  delirium_drugs: [haloperidol, quetiapine, olanzapine, risperidone, ziprasidone]
+  # Footnote c: for sedated patients use the last GCS before sedation; if unknown, score 0.
+  carry_presedation_gcs: true
+
+respiratory:
+  # Table 2: >300 -> 0; <=300 -> 1; <=225 -> 2; <=150 with advanced support -> 3;
+  # <=75 with advanced support -> 4.
+  pf_bands:
+    - {points: 1, op: "<=", value: 300}
+    - {points: 2, op: "<=", value: 225}
+    - {points: 3, op: "<=", value: 150, requires_support: true}
+    - {points: 4, op: "<=", value: 75, requires_support: true}
+  # Footnote f: SpO2:FiO2 only when PaO2:FiO2 is unavailable and SpO2 < 98%.
+  # >300 -> 0; <=300 -> 1; <=250 -> 2; <=200 with support -> 3; <=120 with support -> 4.
+  use_sf_ratio: true
+  sf_max_spo2_exclusive: 98
+  sf_bands:
+    - {points: 1, op: "<=", value: 300}
+    - {points: 2, op: "<=", value: 250}
+    - {points: 3, op: "<=", value: 200, requires_support: true}
+    - {points: 4, op: "<=", value: 120, requires_support: true}
+  # Footnote h: without advanced respiratory support the maximum is 2 points, unless support is
+  # unavailable or precluded by a ceiling of treatment (not identifiable in EHR data; off).
+  max_points_without_support: 2
+  allow_full_score_without_support: false
+  # Footnote g: advanced ventilatory support.
+  advanced_support_types: [hfnc, cpap, bipap, niv, imv, home_vent]
+  # Footnote g: changes in the ratio within 1 hour (eg, after suctioning) are not considered.
+  # Implemented as: a reading is ignored if a later reading of the same ratio type within this
+  # many minutes scores fewer points.
+  transient_minutes: 60
+  # Footnote i: ECMO (all forms) scores 4 in the respiratory component.
+  ecmo_points: 4
+  ecmo_types: [ecmo_vv, ecmo_va]
+
+cardiovascular:
+  # Table 2: MAP >= 70 -> 0; MAP < 70 -> 1 (no vasopressor or inotrope).
+  map_bands:
+    - {points: 1, op: "<", value: 70}
+  # Sum of norepinephrine + epinephrine (ug/kg/min, base): <=0.2 -> 2; >0.2-0.4 -> 3; >0.4 -> 4.
+  ne_epi_bands:
+    - {points: 2, op: ">", value: 0}
+    - {points: 3, op: ">", value: 0.2}
+    - {points: 4, op: ">", value: 0.4}
+  # Low dose + any other vasopressor/inotrope -> 3; medium dose + other -> 4 (high dose is 4).
+  other_agent_adds_points: 1
+  # Any dose of another vasopressor or inotrope (without norepinephrine/epinephrine) -> 2.
+  other_agent_alone_points: 2
+  other_agents: [dobutamine, vasopressin, phenylephrine, milrinone, levosimendan]
+  # Footnote l: dopamine as a single vasopressor: <=20 -> 2; >20-40 -> 3; >40 -> 4 (ug/kg/min).
+  # Dopamine given with norepinephrine/epinephrine counts as an "other" agent.
+  # Dopamine with another non-norepinephrine/epinephrine agent: dopamine bands, and the other
+  # agent adds `other_agent_adds_points` (agreed rule, mirrors the low/medium-dose rows).
+  dopamine_alone_bands:
+    - {points: 2, op: ">", value: 0}
+    - {points: 3, op: ">", value: 20}
+    - {points: 4, op: ">", value: 40}
+  # Footnotes i and n: mechanical cardiovascular support (VA ECMO, IABP, LVAD, microaxial pump).
+  mechanical_support_points: 4
+  mechanical_support_types: [ecmo_va, iabp, lvad, impella]
+  # Footnote j: vasopressors count only if given by continuous infusion for at least 1 hour.
+  min_infusion_minutes: 60
+  # Footnote m: MAP-only scoring when vasoactive drugs are unavailable or precluded by a ceiling
+  # of treatment. Not identifiable in EHR data, so off by default.
+  # 70 or higher -> 0; 60-69 -> 1; 50-59 -> 2; 40-49 -> 3; < 40 -> 4.
+  map_only_fallback: false
+  map_only_bands:
+    - {points: 1, op: "<", value: 70}
+    - {points: 2, op: "<", value: 60}
+    - {points: 3, op: "<", value: 50}
+    - {points: 4, op: "<", value: 40}
+
+liver:
+  # Table 2: <=1.20 -> 0; <=3.0 -> 1; <=6.0 -> 2; <=12.0 -> 3; >12 -> 4 (mg/dL).
+  bilirubin_bands:
+    - {points: 1, op: ">", value: 1.2}
+    - {points: 2, op: ">", value: 3.0}
+    - {points: 3, op: ">", value: 6.0}
+    - {points: 4, op: ">", value: 12.0}
+
+kidney:
+  # Table 2: <=1.20 -> 0; <=2.0 -> 1; <=3.50 -> 2; >3.50 -> 3 (mg/dL).
+  creatinine_bands:
+    - {points: 1, op: ">", value: 1.2}
+    - {points: 2, op: ">", value: 2.0}
+    - {points: 3, op: ">", value: 3.5}
+  # Table 2: UO < 0.5 mL/kg/h for 6-12 h -> 1; < 0.5 for >= 12 h -> 2; < 0.3 for >= 24 h -> 3;
+  # anuria (0 mL) for >= 12 h -> 3. Each criterion is the mean rate over a trailing window.
+  urine_output:
+    - {points: 1, window_hours: 6, op: "<", value: 0.5}
+    - {points: 2, window_hours: 12, op: "<", value: 0.5}
+    - {points: 3, window_hours: 24, op: "<", value: 0.3}
+  anuria:
+    points: 3
+    window_hours: 12
+  # Receiving RRT (includes chronic use) -> 4.
+  rrt_points: 4
+  rrt_types: [rrt_continuous, rrt_intermittent]
+  # Footnote q: intermittent RRT scores 4 on days without RRT until RRT is terminated.
+  # Terminated = this many hours with no session (agreed default), or ICU discharge.
+  intermittent_rrt_carry_hours: 72
+  # Footnote p: not receiving RRT but fulfils criteria -> 4: creatinine > 1.2 mg/dL or oliguria
+  # (< 0.3 mL/kg/h for > 6 h), plus potassium >= 6.0 mmol/L or metabolic acidosis
+  # (pH <= 7.20 and bicarbonate <= 12 mmol/L). All within the same scoring window.
+  rrt_criteria:
+    enabled: true
+    creatinine: {op: ">", value: 1.2}
+    oliguria: {window_hours: 6, op: "<", value: 0.3}
+    potassium: {op: ">=", value: 6.0}
+    ph: {op: "<=", value: 7.20}
+    bicarbonate: {op: "<=", value: 12}
+
+hemostasis:
+  # Table 2: >150 -> 0; <=150 -> 1; <=100 -> 2; <=80 -> 3; <=50 -> 4 (x10^3/uL).
+  platelet_bands:
+    - {points: 1, op: "<=", value: 150}
+    - {points: 2, op: "<=", value: 100}
+    - {points: 3, op: "<=", value: 80}
+    - {points: 4, op: "<=", value: 50}

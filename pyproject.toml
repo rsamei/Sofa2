@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sofa2"
+version = "0.1.0"
+description = "SOFA-2 and original SOFA scores from ICU data (MIMIC-IV first)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "pyyaml>=6.0",
+    "pyarrow>=12",
+]
+
+[project.optional-dependencies]
+bigquery = ["google-cloud-bigquery>=3.10", "db-dtypes>=1.1"]
+local = ["duckdb>=0.10"]
+dev = ["pytest>=7", "duckdb>=0.10"]
+
+[project.scripts]
+sofa2 = "sofa2.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+sofa2 = ["config/*.yaml", "adapters/mimic_iv/*.yaml", "adapters/mimic_iv/sql/*.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
