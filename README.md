@@ -70,6 +70,7 @@ behind each score), `--sofa2-config/--sofa1-config/--pipeline-config` (replace a
 | `sofa2_total`, `sofa1_total` | sum of the six organ scores (0–24) |
 | `<score>_<organ>` | organ score, organ in respiratory, cardiovascular, brain, liver, kidney, hemostasis |
 | `<score>_<organ>_status` | `observed`, `carried_forward`, `imputed_normal` or `missing` |
+| `<score>_brain_presedation_gcs` | true if the window used the last GCS before sedation (footnote c) |
 | `<score>_<value>` | with `include_values=True`: eg `sofa2_pf_min`, `sofa2_ne_epi_max`, `sofa1_uo_ml_day` |
 
 The original SOFA uses the same organ names (coagulation → hemostasis, central nervous system →
@@ -111,6 +112,9 @@ norepinephrine salt → base, infusion rates → µg/kg/min).
 | `medications` | stay_id, time, drug |
 | `support` | stay_id, start, end, type (imv, niv, cpap, bipap, hfnc, home_vent, ecmo, ecmo_vv, ecmo_va, iabp, impella, lvad, rvad, rrt_continuous, rrt_intermittent) |
 | `urine_output` | stay_id, time, volume_ml |
+
+An interval with no end time (still running at extraction) is taken to run until ICU discharge.
+Boolean columns accept true/false, t/f, yes/no or 1/0.
 
 A new database needs an adapter that returns these tables. No scoring code changes. For files that
 are already in this schema, `InternalAdapter(directory)` reads `<table>.csv` or `<table>.parquet`.
@@ -169,13 +173,17 @@ be changed in the YAML.
   weight.
   - A chart's collection interval runs from the previous chart (the first: from admission).
   - The window is scored only when the intervals cover it fully.
+  - Windows are evaluated at every chart time and every hour end. An hour takes its lowest
+    evaluable rate.
+  - On day 1, a 24 h window is fully covered only if a chart falls exactly 24 h after admission,
+    so the 24-hour criteria rarely apply on day 1.
 - Anuria means 0 mL over a covered 12 h window with at least 2 charts.
 - Weight is the last weight charted, else the first of the stay, else `stays.weight_kg`.
 - RRT scores 4 while a session runs.
   - Intermittent RRT also scores 4 for 72 h after each session (footnote q).
   - Chronic dialysis scores 4 throughout.
 - Footnote p ("fulfils criteria for RRT") must be met within the same window.
-- The original SOFA uses the 24-hour urine volume at the end of the window (mL/day).
+- The original SOFA uses the latest evaluable 24-hour urine volume in the window (mL/day).
 
 **Labs and boundaries**
 - Laboratory values up to 6 h before ICU admission count in hour 0. Blood gases are excluded
@@ -189,10 +197,13 @@ be changed in the YAML.
 
 `pipeline.missing.strategy`:
 
-- `locf` (default): an organ without data in a window takes the score of its last observed hour,
+- `locf` (default): an organ without data in a window takes the score of its last measured hour,
   if that hour is at most `locf_max_hours` (24) before the window start (`carried_forward`).
   Otherwise it scores 0 (`imputed_normal`). On day 1 nothing earlier exists, so a missing organ
   scores 0, as Table 2 footnote b recommends.
+  - Only measurements are carried: PaO2:FiO2, SpO2:FiO2, MAP, GCS, labs and urine output.
+  - Points from a treatment that has stopped are not carried, because its record shows it ended.
+    This covers ECMO, vasoactive drugs, mechanical support, RRT and delirium drugs.
 - `normal`: missing organs score 0.
 - `none`: missing organs stay empty, and so does the total.
 
@@ -212,12 +223,23 @@ against `d_items`/`d_labitems` of the MIMIC-IV demo.
 Where a rule comes from MIT-LCP mimic-code, the mapping says so: ventilation episodes,
 urine-output items, RRT items, FiO2 cleaning and lab ranges. Deviations from mimic-code:
 - Only arterial PaO2 is used.
-- All oxygen devices charted at a time are considered.
-- A tracheostomy without a ventilator mode is not advanced support.
-- Dialysis catheter charts alone are not RRT.
-- Mechanical circulatory support uses only items measured while the device runs (flows,
+- **Ventilation:**
+  - All oxygen devices charted at a time are considered.
+  - "Tracheostomy tube" alone gives no status, because the ventilator mode decides; "Trach mask"
+    counts as oxygen.
+  - The Hamilton mode SPONT counts as invasive, and the ventilator mode CPAP as CPAP.
+  - Invasive and non-invasive ventilation procedures (procedureevents) are a second source.
+- **RRT:** dialysis catheter charts alone are not RRT.
+- **Mechanical circulatory support:** only items measured while the device runs (flows,
   pressures, speeds).
-- Infusion rows in rate units other than mcg/kg/min or mcg/min are dropped with a warning.
+- **Infusions:** rows in rate units other than mcg/kg/min or mcg/min are dropped with a
+  warning.
+- **Weight:** charted weight (kg, or lbs converted), else the first `inputevents.patientweight`.
+- **eMAR:** depot antipsychotics (decanoate, pamoate, Consta, microspheres) are not delirium
+  treatment.
+
+For many batches on local files, convert once to Parquet:
+`sofa2.adapters.mimic_iv.convert_to_parquet(src, dst)`.
 
 The same SQL runs on BigQuery and on DuckDB; only table paths and date arithmetic differ.
 

@@ -49,7 +49,7 @@ def _strs(values: Iterable[str]) -> str:
 
 def _chart_items(mp: dict) -> list[int]:
     c = mp["chartevents"]
-    items = c["map"] + c["spo2"] + c["fio2"] + c["weight"]
+    items = c["map"] + c["spo2"] + c["fio2"] + c["weight"] + c.get("weight_lbs", [])
     items += [c["gcs_eye"], c["gcs_verbal"], c["gcs_motor"], c["o2_device"], c["vent_mode"],
               c["vent_mode_hamilton"], c["rrt_pd_catheter_status"]]
     items += c["ecmo_configuration"] + c["ecmo_flow"]
@@ -153,10 +153,10 @@ class MimicIVAdapter:
             stay_filter = "AND 1 = 0"
         else:
             stay_filter = f"AND ie.stay_id IN ({_ints(self._stay_ids)})"
-        hours = int(self.pre_icu_lab_hours)
+        minutes = int(round(float(self.pre_icu_lab_hours) * 60))
         lab_start = (
-            f"DATETIME_SUB(ie.intime, INTERVAL {hours} HOUR)" if self.dialect == "bigquery"
-            else f"ie.intime - INTERVAL {hours} HOUR"
+            f"DATETIME_SUB(ie.intime, INTERVAL {minutes} MINUTE)" if self.dialect == "bigquery"
+            else f"ie.intime - INTERVAL {minutes} MINUTE"
         )
         return _sql(name).format(icu=self.icu, hosp=self.hosp, stay_filter=stay_filter,
                                  lab_start=lab_start, **params)
@@ -172,11 +172,13 @@ class MimicIVAdapter:
         mp = self.mapping
         inp = mp["inputevents"]
         input_items = [i for v in list(inp["drugs"].values()) + list(inp["bolus_drugs"].values()) for i in v]
+        input_items += inp.get("rrt_continuous", [])
         out_items = mp["outputevents"]["urine"] + mp["outputevents"]["urine_subtract"]
-        proc_items = mp["procedureevents"]["rrt_intermittent"] + mp["procedureevents"]["rrt_continuous"]
+        pr = mp["procedureevents"]
+        proc_items = pr["rrt_intermittent"] + pr["rrt_continuous"] + pr.get("imv", []) + pr.get("niv", [])
         icd = mp["diagnoses_icd"]["chronic_rrt"]
         like = " OR ".join(
-            f"LOWER(e.medication) LIKE '%{p.lower()}%'"
+            f"LOWER(e.medication) LIKE '%{p.lower().replace(chr(39), chr(39) * 2)}%'"
             for pats in mp["emar"]["medications"].values() for p in pats
         )
         try:
@@ -208,3 +210,24 @@ def _find(folder: Path, table: str) -> Path:
         if p.exists():
             return p
     raise FileNotFoundError(f"{folder}/{table}(.parquet|.csv.gz|.csv) not found")
+
+
+def convert_to_parquet(src: str | Path, dst: str | Path) -> None:
+    """Convert the MIMIC-IV tables used here from CSV(.gz) to Parquet (needs DuckDB).
+
+    Reading Parquet is much faster than re-reading compressed CSV for every batch of
+    :func:`sofa2.pipeline.compute_scores_batched`. The layout ``<dst>/icu``, ``<dst>/hosp`` is
+    kept, so ``MimicIVAdapter.local(dst)`` works on the result.
+    """
+    import duckdb
+
+    con = duckdb.connect()
+    for module, tables in _TABLES.items():
+        (Path(dst) / module).mkdir(parents=True, exist_ok=True)
+        for table in tables:
+            path = _find(Path(src) / module, table)
+            out = Path(dst) / module / f"{table}.parquet"
+            con.execute(
+                f"COPY (SELECT * FROM read_csv_auto('{path}', sample_size=-1)) "
+                f"TO '{out}' (FORMAT PARQUET)"
+            )

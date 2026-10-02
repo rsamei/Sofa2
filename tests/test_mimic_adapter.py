@@ -82,7 +82,7 @@ def test_bigquery_sql_rendering():
                        "bigquery")
     a.extract(stay_ids=[1, 2])
     labs = next(s for s in seen if "labevents le" in s)
-    assert "DATETIME_SUB(ie.intime, INTERVAL 6 HOUR)" in labs
+    assert "DATETIME_SUB(ie.intime, INTERVAL 360 MINUTE)" in labs
     assert all("ie.stay_id IN (1, 2)" in s for s in seen)
     assert "`physionet-data.mimiciv_3_1_icu`.chartevents" in "".join(seen)
     assert "{" not in "".join(seen)
@@ -114,10 +114,12 @@ def test_status_priority_and_trach():
         (1, t(1), 226732, "Tracheostomy tube"),
         (1, t(2), 226732, "Tracheostomy tube"), (1, t(2), 223849, "CPAP/PSV"),
         (1, t(3), 229314, "NIV"), (1, t(4), 226732, "High flow nasal cannula"),
-        (1, t(5), 223849, "Standby"),
+        (1, t(5), 223849, "Standby"), (1, t(6), 229314, "SPONT"), (1, t(7), 223849, "CPAP"),
+        (1, t(8), 226732, "Trach mask "),
     ], columns=["stay_id", "charttime", "itemid", "value"])
     st = T.ventilation_status(ce, MP["ventilation"], MP["chartevents"])
-    assert st["status"].tolist() == ["imv", "oxygen", "imv", "niv", "hfnc"]
+    # "Tracheostomy tube" alone (1 h) and "Standby" (5 h) give no status
+    assert st["status"].tolist() == ["imv", "imv", "niv", "hfnc", "imv", "cpap", "oxygen"]
 
 
 def test_fio2_fraction():
@@ -135,3 +137,71 @@ def test_batched_equals_single(data):
         warnings.simplefilter("ignore")
         b = compute_scores_batched(MimicIVAdapter.local(DATA), batch_size=1)
     pd.testing.assert_frame_equal(b, compute_scores(data))
+
+
+def test_trach_charts_do_not_split_ventilation():
+    rows = []
+    for h in range(0, 48, 4):
+        rows.append((1, t(h), 229314, "APV (cmv)"))
+        rows.append((1, t(h + 0.4), 226732, "Tracheostomy tube"))
+    ce = pd.DataFrame(rows, columns=["stay_id", "charttime", "itemid", "value"])
+    ep = T.ventilation_episodes(T.ventilation_status(ce, MP["ventilation"], MP["chartevents"]), 14)
+    assert ep.values.tolist() == [[1, t(0), t(44), "imv"]]
+
+
+def _empty(cols):
+    return pd.DataFrame({c: pd.Series(dtype="object") for c in cols})
+
+
+CE_COLS = ["stay_id", "charttime", "itemid", "value", "valuenum"]
+IV_COLS = ["stay_id", "starttime", "endtime", "itemid", "rate", "rateuom", "amount", "patientweight"]
+PE_COLS = ["stay_id", "starttime", "endtime", "itemid"]
+
+
+def test_support_sources():
+    ce = pd.DataFrame([
+        (1, t(1), 229268, "VV", None), (1, t(2), 229270, "4.1", 4.1),
+        (1, t(3), 225965, "In use", None), (1, t(4), 229823, "5.0", 5.0),
+    ], columns=CE_COLS)
+    pe = pd.DataFrame([(1, t(5), t(9), 225792)], columns=PE_COLS)
+    iv = pd.DataFrame([(1, t(6), t(7), 227536, None, None, 20, 80)], columns=IV_COLS)
+    s = T.support(ce, pe, iv, MP).set_index("type")
+    assert set(s.index) == {"ecmo_vv", "ecmo", "rrt_intermittent", "lvad", "imv", "rrt_continuous"}
+    assert s.loc["imv", "end"] == t(9)
+
+
+def test_weight_sources():
+    ce = pd.DataFrame([(1, t(1), 226531, "176", 176.0)], columns=CE_COLS)
+    m = T.measurements(ce, _empty(["stay_id", "charttime", "itemid", "valuenum", "valueuom",
+                                   "specimen_id", "specimen_type"]), MP)
+    assert m["value"].tolist() == pytest.approx([176 * 0.45359237])
+    st = pd.DataFrame({"stay_id": [1, 2], "patient_id": [1, 2], "intime": [T0] * 2, "outtime": [t(24)] * 2})
+    iv = pd.DataFrame([(1, t(2), t(3), 221906, 0.1, "mcg/kg/min", 1, 72.5)], columns=IV_COLS)
+    s = T.stays(st, _empty(["stay_id"]), iv)
+    assert s["weight_kg"].tolist()[0] == 72.5 and pd.isna(s["weight_kg"].tolist()[1])
+
+
+def test_mcg_min_without_weight_warns():
+    iv = pd.DataFrame([(1, t(2), t(4), 221906, 8, "mcg/min", 1, None)], columns=IV_COLS)
+    with pytest.warns(UserWarning, match="without a patient weight"):
+        assert T.infusions(iv, MP).empty
+
+
+def test_emar_depot_excluded():
+    emar = pd.DataFrame({"stay_id": [1, 1], "charttime": [t(1), t(2)],
+                         "medication": ["Haloperidol Decanoate", "Haloperidol"],
+                         "event_txt": ["Administered", "Administered"]})
+    m = T.medications(_empty(IV_COLS), emar, MP)
+    assert m["time"].tolist() == [t(2)]
+
+
+def test_convert_to_parquet(tmp_path, data):
+    import warnings
+
+    from sofa2.adapters.mimic_iv import convert_to_parquet
+
+    convert_to_parquet(DATA, tmp_path)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        d2 = MimicIVAdapter.local(tmp_path).load()
+    pd.testing.assert_frame_equal(compute_scores(d2), compute_scores(data))

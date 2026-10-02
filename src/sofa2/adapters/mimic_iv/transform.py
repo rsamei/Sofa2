@@ -28,10 +28,13 @@ def _invert(groups: dict) -> dict:
 
 
 # ------------------------------------------------------------------------------------ stays
-def stays(raw_stays: pd.DataFrame, chronic: pd.DataFrame) -> pd.DataFrame:
+def stays(raw_stays: pd.DataFrame, chronic: pd.DataFrame, iv: pd.DataFrame) -> pd.DataFrame:
+    """Stays, with the first ``inputevents.patientweight`` as fallback weight (used only when no
+    weight is charted)."""
     s = raw_stays[["stay_id", "patient_id", "intime", "outtime"]].copy()
     s["chronic_rrt"] = s["stay_id"].isin(chronic["stay_id"]) if len(chronic) else False
-    s["weight_kg"] = np.nan
+    w = iv[pd.to_numeric(iv["patientweight"], errors="coerce") > 0].sort_values("starttime")
+    s["weight_kg"] = s["stay_id"].map(w.groupby("stay_id")["patientweight"].first()).astype(float)
     return s
 
 
@@ -55,6 +58,8 @@ def measurements(ce: pd.DataFrame, le: pd.DataFrame, mp: dict) -> pd.DataFrame:
 
     sel = ce["itemid"].isin(c["weight"]) & (v > 0)
     parts.append(ce.loc[sel].assign(variable="weight"))
+    sel = ce["itemid"].isin(c.get("weight_lbs", [])) & (v > 0)
+    parts.append(ce.loc[sel].assign(variable="weight", valuenum=v[sel] * 0.45359237))
 
     chart = pd.concat(parts, ignore_index=True).drop(columns="value")
     chart = chart.rename(columns={"charttime": "time", "valuenum": "value"})
@@ -136,6 +141,10 @@ def infusions(iv: pd.DataFrame, mp: dict) -> pd.DataFrame:
             su = sel & (_trim(x["rateuom"]) == u).fillna(False)
             if su.any():
                 rate[su] = dose_to_ug_kg_min(x.loc[su, "rate"], u, x.loc[su, "patientweight"])
+                n_nan = int(rate[su].isna().sum())
+                if n_nan:
+                    warnings.warn(f"inputevents: dropped {n_nan} {drug} rows in {u} without a "
+                                  "patient weight", stacklevel=2)
     salt = m.get("norepinephrine_salt", "base")
     ne = x["drug"] == "norepinephrine"
     rate[ne] = norepinephrine_to_base(rate[ne], salt)
@@ -154,10 +163,14 @@ def medications(iv: pd.DataFrame, emar: pd.DataFrame, mp: dict) -> pd.DataFrame:
                            "drug": b["itemid"].map(bolus_of)})]
     if len(emar):
         med = emar["medication"].astype("string").str.lower()
+        excluded = pd.Series(False, index=emar.index)
+        for p in mp["emar"].get("exclude", []):
+            excluded |= med.str.contains(p.lower(), regex=False).fillna(False)
         for drug, patterns in mp["emar"]["medications"].items():
             sel = pd.Series(False, index=emar.index)
             for p in patterns:
                 sel |= med.str.contains(p.lower(), regex=False).fillna(False)
+            sel &= ~excluded
             e = emar[sel]
             parts.append(pd.DataFrame({"stay_id": e["stay_id"], "time": e["charttime"], "drug": drug}))
     out = pd.concat(parts, ignore_index=True)
@@ -181,7 +194,8 @@ def ventilation_status(ce: pd.DataFrame, vm: dict, c: dict) -> pd.DataFrame:
         | (mode & x["value"].isin(vm["invasive_modes"]))
         | (ham & x["value"].isin(vm["invasive_modes_hamilton"])),
         "bipap": dev & x["value"].isin(vm["bipap_devices"]),
-        "cpap": dev & x["value"].isin(vm["cpap_devices"]),
+        "cpap": (dev & x["value"].isin(vm["cpap_devices"]))
+        | (mode & x["value"].isin(vm.get("cpap_modes", []))),
         "niv": ham & x["value"].isin(vm["niv_modes_hamilton"]),
         "hfnc": dev & x["value"].isin(vm["hfnc_devices"]),
         "oxygen": dev & x["value"].isin(vm["oxygen_devices"]),
@@ -214,7 +228,7 @@ def ventilation_episodes(status: pd.DataFrame, gap_hours: float) -> pd.DataFrame
     return e[["stay_id", "start", "end", "status"]].reset_index(drop=True)
 
 
-def support(ce: pd.DataFrame, pe: pd.DataFrame, mp: dict) -> pd.DataFrame:
+def support(ce: pd.DataFrame, pe: pd.DataFrame, iv: pd.DataFrame, mp: dict) -> pd.DataFrame:
     c, vm = mp["chartevents"], mp["ventilation"]
     parts = []
 
@@ -238,8 +252,15 @@ def support(ce: pd.DataFrame, pe: pd.DataFrame, mp: dict) -> pd.DataFrame:
                 & _trim(ce["value"]).isin(c["rrt_pd_in_use_values"]).fillna(False)]
     parts.append(_points(pd_cat, "rrt_intermittent"))
 
+    crrt = iv[iv["itemid"].isin(mp["inputevents"].get("rrt_continuous", []))
+              & (pd.to_numeric(iv["amount"], errors="coerce") > 0)]
+    end = crrt["endtime"].fillna(crrt["starttime"])
+    parts.append(pd.DataFrame({"stay_id": crrt["stay_id"], "start": crrt["starttime"],
+                               "end": end.where(end >= crrt["starttime"], crrt["starttime"]),
+                               "type": "rrt_continuous"}))
+
     p = mp["procedureevents"]
-    for typ in ("rrt_intermittent", "rrt_continuous"):
+    for typ in ("rrt_intermittent", "rrt_continuous", "imv", "niv"):
         x = pe[pe["itemid"].isin(p[typ])]
         end = x["endtime"].fillna(x["starttime"])
         parts.append(pd.DataFrame({"stay_id": x["stay_id"], "start": x["starttime"],
@@ -264,6 +285,7 @@ def urine_output(oe: pd.DataFrame, mp: dict) -> pd.DataFrame:
 # ------------------------------------------------------------------------------------- all
 def to_icudata(raw: dict[str, pd.DataFrame], mp: dict) -> ICUData:
     """Build :class:`ICUData` from the raw extracts (keys as the SQL file names)."""
+    raw = {k: v.copy() for k, v in raw.items()}
     for key in ("chartevents", "labevents", "inputevents", "outputevents", "procedureevents", "emar"):
         df = raw[key]
         for col in ("charttime", "starttime", "endtime"):
@@ -273,11 +295,11 @@ def to_icudata(raw: dict[str, pd.DataFrame], mp: dict) -> ICUData:
     st["intime"], st["outtime"] = pd.to_datetime(st["intime"]), pd.to_datetime(st["outtime"])
     ce, le, iv = raw["chartevents"], raw["labevents"], raw["inputevents"]
     return ICUData(
-        stays=stays(st, raw["chronic_rrt"]),
+        stays=stays(st, raw["chronic_rrt"], iv),
         measurements=measurements(ce, le, mp),
         gcs=gcs(ce, mp),
         infusions=infusions(iv, mp),
         medications=medications(iv, raw["emar"], mp),
-        support=support(ce, raw["procedureevents"], mp),
+        support=support(ce, raw["procedureevents"], iv, mp),
         urine_output=urine_output(raw["outputevents"], mp),
     )

@@ -9,6 +9,7 @@ chartevents:
   spo2_range: [0, 100]                 # (0, 100]
   fio2: [223835]                       # Inspired O2 Fraction (charted as % or fraction)
   weight: [226512, 224639]             # Admission Weight (Kg), Daily Weight
+  weight_lbs: [226531]                 # Admission Weight (lbs.), converted to kg
   gcs_eye: 220739
   gcs_verbal: 223900
   gcs_motor: 223901
@@ -17,14 +18,17 @@ chartevents:
   vent_mode: 223849                    # Ventilator Mode
   vent_mode_hamilton: 229314           # Ventilator Mode (Hamilton)
   ecmo_configuration: [229268, 229840] # Circuit Configuration (ECMO), Circuit Configuration (CH)
-  ecmo_flow: [229270, 229842]          # Flow (ECMO), Flow (CH): ECMO running, configuration unknown
+  ecmo_flow: [229270, 229842, 224660]  # Flow (ECMO), Flow (CH), ECMO (L/min): running, configuration unknown
   # Mechanical circulatory support: only items measured while the device is running (flows,
   # pressures, speeds), never insertion, dressing, culture or discontinuation charts.
   mcs:
     iabp: [224322, 224309, 224310, 228866]   # IABP Mean, Assisted Systole, Augmented Diastole, Plateau Pressure (IABP)
     impella: [228154, 229671, 229897]        # Flow Rate (Impella), Flow Rate (Impella) (R), Cardiac Output (CO) (Impella)
-    lvad: [229254, 229262, 228198, 228189]   # Flow (LVAD), Speed (LVAD) [CentriMag], Tandem Heart Flow, CO-Tandem Heart Flow
-    rvad: [229255, 229263, 220128]           # Flow (RVAD), Speed (RVAD) [CentriMag], Right Ventricular Assist Device Flow
+    lvad: [229254, 229262, 228198, 228189, 229823, 229829, 224363]
+    # Flow (LVAD), Speed (LVAD) [CentriMag], Tandem Heart Flow, CO-Tandem Heart Flow,
+    # Flow (VAD), Speed (VAD) [Durable VAD], VAD Beat Rate L
+    rvad: [229255, 229263, 220128, 223775]
+    # Flow (RVAD), Speed (RVAD) [CentriMag], Right Ventricular Assist Device Flow, VAD Beat Rate R
   # RRT in progress: the mimic-code rrt concept items flagged "dialysis_active" (catheter and
   # access items, which only show that a catheter is present, are not used).
   rrt_active:
@@ -75,6 +79,8 @@ inputevents:
     milrinone: ["mcg/kg/min", "mcg/min"]
   # MIMIC-IV (US) records norepinephrine as base (labelled concentration of base).
   norepinephrine_salt: base
+  # CRRT solutions (mimic-code rrt concept): rows with amount > 0 mark CRRT running.
+  rrt_continuous: [227536, 227525]     # KCl (CRRT), Calcium Gluconate (CRRT)
   # Discrete administrations used as delirium treatment.
   bolus_drugs:
     haloperidol: [221824]                            # Haloperidol (Haldol)
@@ -89,6 +95,10 @@ procedureevents:
   # Dialysis procedures with start and end times (mimic-code rrt concept, active items only).
   rrt_intermittent: [225441, 225805]   # Hemodialysis, Peritoneal Dialysis
   rrt_continuous: [225802, 225803, 225809, 225955]  # CRRT, CVVHD, CVVHDF, SCUF
+  # Ventilation procedures with start and end times; a second source next to the charted
+  # devices and modes (single-chart episodes are otherwise dropped).
+  imv: [225792]                        # Invasive Ventilation
+  niv: [225794]                        # Non-invasive Ventilation
 
 emar:
   # Delirium drugs given (hosp.emar, matched on the medication name).
@@ -98,6 +108,8 @@ emar:
     olanzapine: ["olanzapine"]
     risperidone: ["risperidone"]
     ziprasidone: ["ziprasidone"]
+  # Long-acting depot formulations are not delirium treatment.
+  exclude: ["decanoate", "pamoate", "consta", "microsphere"]
   given_events: ["Administered", "Delayed Administered", "Partial Administered",
                  "Administered Bolus from IV Drip", "Started", "Delayed Started", "Restarted",
                  "Confirmed", "Delayed Confirmed"]
@@ -110,11 +122,12 @@ diagnoses_icd:
     "10": ["N186", "Z992"]
 
 ventilation:
-  # Classification of each charting time, following mimic-code ventilation.sql, with two
+  # Classification of each charting time, following mimic-code ventilation.sql, with these
   # deviations: (1) all devices charted at a time are considered (mimic-code uses only the
-  # first), with priority imv > bipap/cpap/niv > hfnc; (2) a tracheostomy without a ventilator
-  # mode is not advanced support (trach mask / collar oxygen), while mimic-code labels it
-  # "Tracheostomy" regardless.
+  # first), with priority imv > bipap/cpap/niv > hfnc; (2) "Tracheostomy tube" alone gives no
+  # status (the ventilator mode, charted separately, decides), and "Trach mask" is oxygen,
+  # while mimic-code labels both "Tracheostomy"; (3) Hamilton "SPONT" (spontaneous mode with
+  # its own NIV modes) counts as invasive, and the plain ventilator mode "CPAP" as CPAP.
   invasive_devices: ["Endotracheal tube"]
   invasive_modes: ["(S) CMV", "APRV", "APRV/Biphasic+ApnPress", "APRV/Biphasic+ApnVol",
                    "APV (cmv)", "Ambient", "Apnea Ventilation", "CMV", "CMV/ASSIST",
@@ -125,14 +138,15 @@ ventilation:
                    "SIMV/AutoFlow", "SIMV/PRES", "SIMV/PSV", "SIMV/PSV/AutoFlow", "SIMV/VOL",
                    "SYNCHRON MASTER", "SYNCHRON SLAVE", "VOL/AC"]
   invasive_modes_hamilton: ["APRV", "APV (cmv)", "Ambient", "(S) CMV", "P-CMV", "SIMV",
-                            "APV (simv)", "P-SIMV", "VS", "ASV"]
+                            "APV (simv)", "P-SIMV", "VS", "ASV", "SPONT"]
   bipap_devices: ["Bipap mask"]
   cpap_devices: ["CPAP mask"]
+  cpap_modes: ["CPAP"]
   niv_modes_hamilton: ["DuoPaP", "NIV", "NIV-ST"]
   hfnc_devices: ["High flow nasal cannula"]
   oxygen_devices: ["Non-rebreather", "Face tent", "Aerosol-cool", "Venti mask",
                    "Medium conc mask", "Ultrasonic neb", "Vapomist", "Oxymizer", "High flow neb",
-                   "Nasal cannula", "Tracheostomy tube", "Trach mask"]
+                   "Nasal cannula", "Trach mask"]
   none_devices: ["None"]
   # Episodes (mimic-code): a new episode starts when the status changes or 14 h or more passed
   # since the last chart with the same status; it ends at the next chart of any status, or at its
