@@ -97,13 +97,14 @@ def drop_transient(readings: pd.DataFrame, minutes: float) -> pd.DataFrame:
     r = readings.reset_index(drop=True)
     win = np.timedelta64(int(minutes * 60), "s")
     for _, g in r.groupby(["stay_id", "kind"], sort=False):
-        g = g.sort_values("time")
+        g = g.sort_values("time", kind="stable")
         t = g["time"].to_numpy()
         p = g["points"].to_numpy()
         idx = g.index.to_numpy()
+        lo = np.searchsorted(t, t, side="right")  # strictly later readings only
         hi = np.searchsorted(t, t + win, side="right")
         for i in range(len(g)):
-            later = p[i + 1 : hi[i]]
+            later = p[lo[i] : hi[i]]
             if later.size and np.nanmin(later) < p[i]:
                 keep[idx[i]] = False
     return r.loc[keep]

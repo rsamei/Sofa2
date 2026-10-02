@@ -111,7 +111,7 @@ VALUE_RANGES = {
     "potassium": (0, 15),
     "ph": (6.0, 8.0),
     "bicarbonate": (0, 80),
-    "weight": (0, 700),
+    "weight": (1, 700),
 }
 GCS_RANGES = {"eye": (1, 4), "verbal": (1, 5), "motor": (1, 6), "total": (3, 15)}
 
@@ -123,6 +123,21 @@ class SchemaError(ValueError):
 def empty(table: str) -> pd.DataFrame:
     """An empty table with the required columns of ``table``."""
     return pd.DataFrame({c: pd.Series(dtype="object") for c in COLUMNS[table]})
+
+
+_TRUE = {"true", "t", "yes", "y", "1", "1.0"}
+_FALSE = {"false", "f", "no", "n", "0", "0.0", "", "nan", "none", "<na>"}
+
+
+def _to_bool(s: pd.Series, name: str) -> pd.Series:
+    """Booleans from bool, numeric or text columns ('t'/'f', 'yes'/'no', 1/0); missing -> False."""
+    if s.dtype == bool:
+        return s
+    text = s.astype("string").str.strip().str.lower().fillna("")
+    bad = set(text) - _TRUE - _FALSE
+    if bad:
+        raise SchemaError(f"{name}: cannot read {sorted(bad)[:5]} as true/false")
+    return text.isin(_TRUE).astype(bool)
 
 
 def _coerce(df: pd.DataFrame, table: str) -> pd.DataFrame:
@@ -137,7 +152,7 @@ def _coerce(df: pd.DataFrame, table: str) -> pd.DataFrame:
         elif kind == "float":
             out[col] = pd.to_numeric(out[col], errors="raise").astype(float)
         elif kind == "bool":
-            out[col] = out[col].fillna(False).astype(bool)
+            out[col] = _to_bool(out[col], f"{table}.{col}")
         elif kind == "str":
             out[col] = out[col].astype(str).str.strip().str.lower()
     return out
@@ -163,6 +178,8 @@ class ICUData:
         """
         tables = {f.name: _coerce(getattr(self, f.name), f.name) for f in fields(self)}
         stays = tables["stays"]
+        if stays[["intime", "outtime"]].isna().any().any():
+            raise SchemaError("stays: intime and outtime are required")
         if stays["stay_id"].duplicated().any():
             raise SchemaError("stays: duplicated stay_id")
         if (stays["outtime"] <= stays["intime"]).any():
@@ -204,8 +221,20 @@ class ICUData:
             if bad:
                 raise SchemaError(f"{name}: unknown {col} {sorted(bad)}")
             t = tables[name]
+            no_start = t["start"].isna()
+            if no_start.any():
+                warnings.warn(f"{name}: dropped {int(no_start.sum())} rows without a start time",
+                              stacklevel=2)
+                t = t.loc[~no_start]
+            # an interval still running at extraction (no end) runs until ICU discharge
+            no_end = t["end"].isna()
+            if no_end.any():
+                t = t.copy()
+                t.loc[no_end, "end"] = t.loc[no_end, "stay_id"].map(
+                    stays.set_index("stay_id")["outtime"])
             if (t["end"] < t["start"]).any():
                 raise SchemaError(f"{name}: end before start")
+            tables[name] = t.reset_index(drop=True)
         if (tables["infusions"]["rate"] < 0).any():
             raise SchemaError("infusions: negative rate")
         if (tables["urine_output"]["volume_ml"] < 0).any():

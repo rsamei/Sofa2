@@ -13,7 +13,7 @@ _MAX = ("respiratory", "cardiovascular", "brain", "liver", "kidney", "hemostasis
         "ne_epi_max", "dopamine_max", "bilirubin_max", "creatinine_max", "potassium_max")
 _MIN = ("pf_min", "sf_min", "map_min", "gcs_min", "platelets_min", "ph_min", "bicarbonate_min",
         "uo_rate_6h", "uo_rate_12h", "uo_rate_24h")
-_ANY = ("oliguria", "rrt", "sedated", "delirium")
+_ANY = ("oliguria", "rrt", "sedated", "delirium", "presedation_gcs")
 _LAST = ("uo_ml_day",)
 
 
@@ -38,12 +38,12 @@ def window_frame(hourly: pd.DataFrame, freq: str, pcfg: dict) -> pd.DataFrame:
 
 def aggregate(hourly: pd.DataFrame, freq: str, pcfg: dict) -> pd.DataFrame:
     """Reduce hourly columns to windows: organs and worst-high values by max, worst-low values
-    by min, flags by any, and ``_LAST`` columns by their value in the last hour.
+    by min, flags by any, and ``_LAST`` columns by their last evaluable value.
 
     Returns:
         DataFrame with stay_id, window, hr_first, hr_last and the reduced columns.
     """
-    cols = list(hourly.columns)
+    cols = [c for c in hourly.columns if not c.endswith("_meas")]
     h = hourly.copy()
     for c in _ANY:
         if c in h:
@@ -57,7 +57,7 @@ def aggregate(hourly: pd.DataFrame, freq: str, pcfg: dict) -> pd.DataFrame:
             if c in _MIN:
                 parts[c] = grp[c].min()
             elif c in _LAST:
-                parts[c] = grp[c].agg(lambda x: x.iloc[-1])
+                parts[c] = grp[c].last()  # last evaluable value in the window
             else:
                 parts[c] = grp[c].max()
         agg = pd.DataFrame(parts)
@@ -68,8 +68,8 @@ def aggregate(hourly: pd.DataFrame, freq: str, pcfg: dict) -> pd.DataFrame:
         grp = h.groupby(level="stay_id", sort=False)
         parts = {}
         for c in cols:
-            if c in _LAST:
-                parts[c] = h[c]
+            if c in _LAST:  # last evaluable value in the trailing window
+                parts[c] = grp[c].ffill(limit=n - 1)
                 continue
             roll = grp[c].rolling(n, min_periods=1)
             r = roll.min() if c in _MIN else roll.max()

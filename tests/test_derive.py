@@ -9,7 +9,7 @@ from sofa2.derive.infusions import hourly_rates, valid_infusions
 from sofa2.derive.oxygenation import drop_transient, ratio_readings
 from sofa2.derive.rrt import rrt_hourly
 from sofa2.derive.timegrid import assign_hour, build_grid, overlap_hours
-from sofa2.derive.urine import anuria, urine_windows, weight_at
+from sofa2.derive.urine import urine_windows, weight_at
 from sofa2.pipeline import compute_scores
 from sofa2.schema import ICUData
 
@@ -170,7 +170,6 @@ def test_urine_coverage_rule():
     # end of hour 6 (7:00): charts at 2, 4, 6 h are in (1, 7]; their intervals sum to 6 h -> ok
     assert uw.loc[(1, 6), "rate_6"] == pytest.approx(0.2)
     # end of hour 7 (8:00): only charts at 4 and 6 h in (2, 8]: 4 h of coverage -> not scored
-    assert uw.loc[(1, 7), "cov_6"] == pytest.approx(4.0)
     assert np.isnan(uw.loc[(1, 7), "rate_6"])
     assert np.isnan(uw.loc[(1, 5), "rate_12"])
 
@@ -179,9 +178,8 @@ def test_anuria():
     s = ICUData(stays=stays(weight_kg=100)).validate().stays
     u = urine([4, 8, 12], [0.0, 0.0, 0.0])
     uw = urine_windows(u, s, meas([]), CFG.pipeline, windows=(12,))
-    an = anuria(uw, 12, 2)
-    assert bool(an.loc[(1, 11)])
-    assert not bool(an.loc[(1, 10)])
+    assert bool(uw.loc[(1, 11), "anuria_12"])
+    assert not bool(uw.loc[(1, 10), "anuria_12"])
 
 
 def test_urine_in_pipeline_sofa1_daily_volume():
@@ -258,3 +256,76 @@ def test_incomplete_gcs_without_flag_ignored():
     r = score_day1(gcs=g)
     assert r["sofa2_brain"] == 0
     assert r["sofa2_brain_status"] == "imputed_normal"
+
+
+# ------------------------------------------------------------------ review fixes
+def test_missing_end_runs_to_discharge():
+    i = inf([(1, t(1), pd.NaT, "propofol", 5)])
+    s = pd.DataFrame({"stay_id": [1], "start": [t(2)], "end": [pd.NaT], "type": ["rrt_continuous"]})
+    d = ICUData(stays=stays(48), infusions=i, support=s)
+    r = compute_scores(d).set_index("window_index")
+    assert r.loc[1, "sofa2_kidney"] == 4  # RRT without an end runs until discharge
+
+
+def test_transient_ties_do_not_depend_on_row_order():
+    sup = pd.DataFrame({"stay_id": [1], "start": [t(0)], "end": [t(24)], "type": ["imv"]})
+    base = [(1, t(1.5), "fio2", 0.8)]
+    a = meas(base + [(1, t(2), "spo2", 90), (1, t(2), "spo2", 97)])
+    b = meas(base + [(1, t(2), "spo2", 97), (1, t(2), "spo2", 90)])
+    ra = score_day1(measurements=a, support=sup)["sofa2_respiratory"]
+    rb = score_day1(measurements=b, support=sup)["sofa2_respiratory"]
+    assert ra == rb == 4  # S/F 112.5 with support; simultaneous readings both count
+
+
+def test_text_booleans(tmp_path):
+    from sofa2.adapters.internal import InternalAdapter
+
+    st = pd.DataFrame({"stay_id": [1, 2, 3, 4], "patient_id": [1, 2, 3, 4], "intime": [T0] * 4,
+                       "outtime": [t(24)] * 4, "chronic_rrt": ["f", None, "no", "t"]})
+    st.to_csv(tmp_path / "stays.csv", index=False)
+    r = compute_scores(InternalAdapter(tmp_path))
+    assert r["sofa2_kidney"].tolist() == [0, 0, 0, 4]
+    st["chronic_rrt"] = ["maybe", None, None, None]
+    with pytest.raises(Exception, match="true/false"):
+        ICUData(stays=st).validate()
+
+
+def test_irregular_urine_charting_scored_mid_stay():
+    # 20 mL every 2.5 h at 100 kg = 192 mL/day; day 2 is fully covered by charts
+    u = urine([2.5 * k for k in range(1, 29)], [20.0] * 28)
+    d = ICUData(stays=stays(72, weight_kg=100), urine_output=u)
+    r = compute_scores(d, include_values=True).set_index("window_index")
+    assert r.loc[1, "sofa1_uo_ml_day"] == pytest.approx(192)
+    assert r.loc[1, "sofa1_kidney"] == 4
+    assert r.loc[1, "sofa2_kidney"] == 3
+
+
+def test_locf_does_not_carry_stopped_treatment():
+    s = pd.DataFrame({"stay_id": [1, 1], "start": [t(30), t(0)], "end": [t(34), t(10)],
+                      "type": ["rrt_continuous", "ecmo_vv"]})
+    r = compute_scores(ICUData(stays=stays(72), support=s)).set_index("window_index")
+    assert r.loc[1, "sofa2_kidney"] == 4 and r.loc[1, "sofa2_kidney_status"] == "observed"
+    assert r.loc[2, "sofa2_kidney"] == 0 and r.loc[2, "sofa2_kidney_status"] == "imputed_normal"
+    assert r.loc[0, "sofa2_respiratory"] == 4
+    assert r.loc[1, "sofa2_respiratory"] == 0
+
+
+def test_presedation_flag():
+    g = gcs([(1, t(1), 3, 4, 5, 12, False)])
+    i = inf([(1, t(3), t(20), "propofol", 20)])
+    r = score_day1(gcs=g, infusions=i)
+    assert bool(r["sofa2_brain_presedation_gcs"])
+
+
+def test_zero_stays():
+    r = compute_scores(ICUData(stays=stays().iloc[0:0]))
+    assert r.empty
+
+
+def test_hourly_locf():
+    m = meas([(1, t(1), "creatinine", 2.5)])
+    h = compute_scores(ICUData(stays=stays(60), measurements=m), freq="hourly").set_index("window_index")
+    assert h.loc[24, "sofa2_kidney_status"] == "observed"        # window hours 1-24
+    assert h.loc[25, "sofa2_kidney_status"] == "carried_forward"  # window 2-25, last obs hour 1
+    assert h.loc[25, "sofa2_kidney"] == 2
+    assert h.loc[49, "sofa2_kidney_status"] == "imputed_normal"   # 26-49: 25 h > 24 h

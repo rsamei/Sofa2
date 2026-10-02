@@ -11,7 +11,7 @@ from sofa2.config import Config, load_config
 from sofa2.derive.timegrid import HOUR
 from sofa2.missing import apply_missing
 from sofa2.schema import ICUData
-from sofa2.scoring.engine import ORGANS, hourly_sofa1, hourly_sofa2, shared_inputs
+from sofa2.scoring.engine import MEAS, ORGANS, hourly_sofa1, hourly_sofa2, shared_inputs
 from sofa2.scoring.windows import aggregate, apply_window_rules
 
 SCORES = {"sofa2": hourly_sofa2, "sofa1": hourly_sofa1}
@@ -52,6 +52,8 @@ def compute_scores(
         data = data.load()
     cfg = config or load_config()
     data = data.validate()
+    if data.stays.empty:
+        return pd.DataFrame(columns=["stay_id", "window_index", "window_start", "window_end"])
     shared = shared_inputs(data, cfg)
     result = None
     for name in scores:
@@ -61,7 +63,8 @@ def compute_scores(
         hourly = SCORES[name](data, cfg, shared)
         win = aggregate(hourly, freq, cfg.pipeline)
         win = apply_window_rules(win, name, score_cfg)
-        win = apply_missing(win, hourly[list(ORGANS)], ORGANS, cfg.pipeline)
+        meas = hourly[list(MEAS)].set_axis(list(ORGANS), axis=1)
+        win = apply_missing(win, meas, ORGANS, cfg.pipeline)
         organ_vals = win[list(ORGANS)].to_numpy(dtype=float)
         total = organ_vals.sum(axis=1)  # NaN if any organ is missing (strategy "none")
         cols = {k: win[k] for k in _KEYS}
@@ -70,8 +73,10 @@ def compute_scores(
             cols[f"{name}_{o}"] = win[o]
         for o in ORGANS:
             cols[f"{name}_{o}_status"] = win[f"{o}_status"]
+        cols[f"{name}_brain_presedation_gcs"] = win["presedation_gcs"].astype(bool)
         if include_values:
-            extra = [c for c in hourly.columns if c not in ORGANS]
+            extra = [c for c in hourly.columns
+                     if c not in ORGANS and c not in MEAS and c != "presedation_gcs"]
             if name == "sofa2":
                 extra.append("rrt_criteria_met")
             for c in extra:

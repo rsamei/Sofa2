@@ -37,7 +37,8 @@ def brain_hourly(
     * Delirium treatment in the hour scores at least 1 (footnote e, SOFA-2 only).
 
     Returns:
-        DataFrame indexed by (stay_id, hr) with gcs_min, gcs_pts, sedated, delirium, brain_pts.
+        DataFrame indexed by (stay_id, hr) with gcs_min, gcs_pts, sedated, presedation_gcs
+        (pre-sedation GCS carried in this hour), delirium, brain_pts.
     """
     bc = score_cfg["brain"]
     grid = build_grid(stays).set_index(["stay_id", "hr"])
@@ -67,8 +68,11 @@ def brain_hourly(
     out["sedated"] = out.index.isin(pd.MultiIndex.from_frame(sed_hours[["stay_id", "hr"]])) if len(sed_hours) else False
     if bc.get("carry_presedation_gcs"):
         last = out.groupby(level="stay_id")["gcs_pts"].ffill()
-        fill = out["sedated"] & out["gcs_pts"].isna()
+        fill = out["sedated"] & out["gcs_pts"].isna() & last.notna()
         out.loc[fill, "gcs_pts"] = last[fill]
+        out["presedation_gcs"] = fill
+    else:
+        out["presedation_gcs"] = False
 
     drugs = bc.get("delirium_drugs") or []
     med = assign_hour(medications[medications["drug"].isin(drugs)], stays)

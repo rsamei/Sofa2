@@ -17,11 +17,15 @@ from sofa2.derive.infusions import active_hours, hourly_rates, valid_infusions
 from sofa2.derive.oxygenation import ratio_readings, respiratory_hourly
 from sofa2.derive.rrt import rrt_hourly
 from sofa2.derive.timegrid import assign_hour, build_grid
-from sofa2.derive.urine import anuria, urine_windows
+from sofa2.derive.urine import urine_windows
 from sofa2.schema import VASOACTIVE_DRUGS, ICUData
 from sofa2.scoring import components as C
+from sofa2.scoring.bands import score
 
 ORGANS = ("respiratory", "cardiovascular", "brain", "liver", "kidney", "hemostasis")
+#: Hourly organ points from measurements only (no treatment-derived points), used to carry
+#: values forward: a recorded treatment that has stopped is not carried.
+MEAS = tuple(f"{o}_meas" for o in ORGANS)
 
 _LAB_AGG = {
     "bilirubin": "max",
@@ -91,6 +95,7 @@ def hourly_sofa2(data: ICUData, cfg, sh: Shared) -> pd.DataFrame:
     rh = respiratory_hourly(sh.readings, data.support, data.stays, c).reindex(idx)
     ecmo = _flag(idx, _support_hours(data, c["respiratory"]["ecmo_types"]))
     out["respiratory"] = C.respiratory(rh["pf_pts"], rh["sf_pts"], ecmo, c["respiratory"])
+    out["respiratory_meas"] = C.respiratory(rh["pf_pts"], rh["sf_pts"], None, c["respiratory"])
     out["pf_min"], out["sf_min"] = rh["pf_min"], rh["sf_min"]
 
     # cardiovascular
@@ -104,6 +109,7 @@ def hourly_sofa2(data: ICUData, cfg, sh: Shared) -> pd.DataFrame:
     out["cardiovascular"] = C.cardiovascular_sofa2(
         rates["ne_epi"], rates["dopamine"], other, mech, sh.labs["map_min"], cc
     )
+    out["cardiovascular_meas"] = score(sh.labs["map_min"], cc["map_bands"])
     out["map_min"], out["ne_epi_max"], out["dopamine_max"] = (
         sh.labs["map_min"], rates["ne_epi"], rates["dopamine"]
     )
@@ -111,24 +117,24 @@ def hourly_sofa2(data: ICUData, cfg, sh: Shared) -> pd.DataFrame:
     # brain
     bh = brain_hourly(data.gcs, data.infusions, data.medications, data.stays, c, p).reindex(idx)
     out["brain"] = bh["brain_pts"]
+    out["brain_meas"] = bh["gcs_pts"]
     out["gcs_min"], out["sedated"], out["delirium"] = bh["gcs_min"], bh["sedated"], bh["delirium"]
+    out["presedation_gcs"] = bh["presedation_gcs"]
 
     # liver, hemostasis
-    out["liver"] = C.liver(sh.labs["bilirubin_max"], c["liver"])
-    out["hemostasis"] = C.hemostasis(sh.labs["platelets_min"], c["hemostasis"])
+    out["liver"] = out["liver_meas"] = C.liver(sh.labs["bilirubin_max"], c["liver"])
+    out["hemostasis"] = out["hemostasis_meas"] = C.hemostasis(sh.labs["platelets_min"], c["hemostasis"])
     out["bilirubin_max"], out["platelets_min"] = sh.labs["bilirubin_max"], sh.labs["platelets_min"]
 
     # kidney
     kc = c["kidney"]
     uw = sh.urine
     rates_uo = {int(cr["window_hours"]): uw[f"rate_{int(cr['window_hours'])}"].to_numpy() for cr in kc["urine_output"]}
-    an = anuria(
-        uw, int(kc["anuria"]["window_hours"]), p["urine_output"]["anuria_min_charts"],
-        p["urine_output"]["require_full_coverage"],
-    ).to_numpy()
+    an = uw[f"anuria_{int(kc['anuria']['window_hours'])}"].to_numpy()
     uo_pts = C.urine_points_sofa2(rates_uo, an, kc)
     rrt = rrt_hourly(data.support, data.stays, kc).reindex(idx).to_numpy()
     out["kidney"] = C.kidney_sofa2(sh.labs["creatinine_max"], uo_pts, rrt, kc)
+    out["kidney_meas"] = C.kidney_sofa2(sh.labs["creatinine_max"], uo_pts, False, kc)
     out["creatinine_max"] = sh.labs["creatinine_max"]
     olig = kc["rrt_criteria"]["oliguria"]
     with np.errstate(invalid="ignore"):
@@ -150,6 +156,7 @@ def hourly_sofa1(data: ICUData, cfg, sh: Shared) -> pd.DataFrame:
 
     rh = respiratory_hourly(sh.readings, data.support, data.stays, c).reindex(idx)
     out["respiratory"] = C.respiratory(rh["pf_pts"], None, None, c["respiratory"])
+    out["respiratory_meas"] = out["respiratory"]
     out["pf_min"] = rh["pf_min"]
 
     cc = c["cardiovascular"]
@@ -160,18 +167,22 @@ def hourly_sofa1(data: ICUData, cfg, sh: Shared) -> pd.DataFrame:
         rates["norepinephrine"], rates["epinephrine"], rates["dopamine"], rates["dobutamine"],
         sh.labs["map_min"], cc,
     )
+    out["cardiovascular_meas"] = score(sh.labs["map_min"], cc["map_bands"])
     out["map_min"] = sh.labs["map_min"]
 
     bh = brain_hourly(data.gcs, data.infusions, data.medications, data.stays, c, p).reindex(idx)
     out["brain"] = bh["brain_pts"]
+    out["brain_meas"] = bh["gcs_pts"]
     out["gcs_min"] = bh["gcs_min"]
+    out["presedation_gcs"] = bh["presedation_gcs"]
 
-    out["liver"] = C.liver(sh.labs["bilirubin_max"], c["liver"])
-    out["hemostasis"] = C.hemostasis(sh.labs["platelets_min"], c["hemostasis"])
+    out["liver"] = out["liver_meas"] = C.liver(sh.labs["bilirubin_max"], c["liver"])
+    out["hemostasis"] = out["hemostasis_meas"] = C.hemostasis(sh.labs["platelets_min"], c["hemostasis"])
     out["bilirubin_max"], out["platelets_min"] = sh.labs["bilirubin_max"], sh.labs["platelets_min"]
 
     kc = c["kidney"]
     out["kidney"] = C.kidney_sofa1(sh.labs["creatinine_max"], np.nan, kc)
+    out["kidney_meas"] = out["kidney"]
     out["creatinine_max"] = sh.labs["creatinine_max"]
     out["uo_ml_day"] = sh.urine[f"mlday_{int(kc['urine_output_window_hours'])}"]
     return out

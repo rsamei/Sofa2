@@ -3,8 +3,11 @@
 Strategies (``pipeline.missing.strategy``):
 
 ``locf``
-    A window without data for an organ takes the points of the last hour with data, if that hour
-    is at most ``locf_max_hours`` before the window start (status ``carried_forward``);
+    A window without data for an organ takes the points of the last hour with a measurement for
+    that organ, if that hour is at most ``locf_max_hours`` before the window start (status
+    ``carried_forward``). Only measurement-based points are carried (eg PaO2:FiO2, MAP, GCS,
+    creatinine, urine output); points from a recorded treatment that has stopped (ECMO,
+    vasoactive drugs, mechanical support, RRT, delirium drugs) are not;
     otherwise 0 (status ``imputed_normal``). On the first day there is nothing to carry, so a
     missing organ scores 0, as recommended in SOFA-2 Table 2 footnote b.
 ``normal``
@@ -33,7 +36,8 @@ def apply_missing(win: pd.DataFrame, hourly: pd.DataFrame, organs, pcfg: dict) -
 
     Args:
         win: windowed scores with stay_id, hr_first and one column per organ.
-        hourly: hourly organ points (indexed by stay_id, hr) the windows were built from.
+        hourly: hourly measurement-based organ points (indexed by stay_id, hr), one column per
+            organ, used as the source of carried values.
         organs: organ column names.
         pcfg: pipeline config.
     """
