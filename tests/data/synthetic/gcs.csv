@@ -1,0 +1,5 @@
+stay_id,time,eye,verbal,motor,total,verbal_unassessable
+1,2100-01-01 01:00:00,4,5.0,6,15.0,False
+1,2100-01-01 10:00:00,2,2.0,4,8.0,False
+1,2100-01-02 12:00:00,3,,5,,True
+4,2100-01-01 02:00:00,2,2.0,3,7.0,False
