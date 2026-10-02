@@ -10,6 +10,7 @@ value of the time unit (eg the lowest platelet count of the hour).
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 
 from sofa2.scoring.bands import score
 
@@ -18,13 +19,19 @@ def _arr(x, dtype=float) -> np.ndarray:
     return np.atleast_1d(np.asarray(x, dtype=dtype))
 
 
+def _shape(*args) -> tuple:
+    """Common broadcast shape of all non-None arguments (at least 1-d)."""
+    return np.broadcast_shapes(*(np.atleast_1d(np.asarray(a, dtype=object)).shape
+                                 for a in args if a is not None))
+
+
 def _bool(x, shape) -> np.ndarray:
+    """Boolean flag array; missing values (NaN, None, pd.NA) count as False."""
     if x is None:
         return np.zeros(shape, dtype=bool)
-    a = np.atleast_1d(np.asarray(x))
-    if a.dtype.kind == "f":
-        a = np.nan_to_num(a, nan=0.0)
-    return np.broadcast_to(a.astype(bool), shape)
+    a = np.atleast_1d(np.asarray(x, dtype=object))
+    a = np.where(pd.isna(a), False, a).astype(bool)
+    return np.broadcast_to(a, shape)
 
 
 def _pos(x, shape) -> np.ndarray:
@@ -37,9 +44,10 @@ def _pos(x, shape) -> np.ndarray:
 
 def fmax(*arrays) -> np.ndarray:
     """Element-wise maximum ignoring NaN (NaN only where all inputs are NaN)."""
+    shape = _shape(*arrays)
     out = None
     for a in arrays:
-        a = _arr(a)
+        a = np.broadcast_to(_arr(a), shape)
         if out is None:
             out = a.copy()
         else:
@@ -60,11 +68,12 @@ def gcs_points(total, motor=None, assessable=None, cfg: dict | None = None) -> n
     (``assessable`` false) and ``cfg['use_motor_when_unassessable']`` is true, the motor
     response is scored instead (SOFA-2 footnote d); otherwise the assessment gives NaN.
     """
-    total = _arr(total)
-    ok = np.ones(total.shape, dtype=bool) if assessable is None else _bool(assessable, total.shape)
+    shape = _shape(total, motor, assessable)
+    total = np.broadcast_to(_arr(total), shape)
+    ok = np.ones(shape, dtype=bool) if assessable is None else _bool(assessable, shape)
     out = np.where(ok, score(total, cfg["gcs_total_bands"]), np.nan)
     if cfg.get("use_motor_when_unassessable") and motor is not None:
-        motor_pts = score(np.broadcast_to(_arr(motor), total.shape), cfg["gcs_motor_bands"])
+        motor_pts = score(np.broadcast_to(_arr(motor), shape), cfg["gcs_motor_bands"])
         out = np.where(ok, out, motor_pts)
     return out
 
@@ -75,11 +84,12 @@ def brain(gcs_pts, delirium=None, cfg: dict | None = None) -> np.ndarray:
     Delirium treatment scores at least ``cfg['delirium_min_points']`` even with GCS 15 or no
     GCS; without delirium treatment and without GCS the result is NaN.
     """
-    gcs_pts = _arr(gcs_pts)
     minimum = cfg.get("delirium_min_points")
     if not minimum or delirium is None:
-        return gcs_pts
-    d = _bool(delirium, gcs_pts.shape)
+        return _arr(gcs_pts)
+    shape = _shape(gcs_pts, delirium)
+    gcs_pts = np.broadcast_to(_arr(gcs_pts), shape)
+    d = _bool(delirium, shape)
     return np.where(d, fmax(gcs_pts, np.full(gcs_pts.shape, float(minimum))), gcs_pts)
 
 
@@ -94,10 +104,11 @@ def ratio_points(ratio, support, bands, cfg: dict) -> np.ndarray:
     Without support the score is capped at ``cfg['max_points_without_support']`` unless
     ``cfg['allow_full_score_without_support']`` (SOFA-2 footnote h).
     """
-    ratio = _arr(ratio)
-    sup = _bool(support, ratio.shape)
+    shape = _shape(ratio, support)
+    ratio = np.broadcast_to(_arr(ratio), shape)
+    sup = _bool(support, shape)
     if cfg.get("allow_full_score_without_support"):
-        sup = np.ones(ratio.shape, dtype=bool)
+        sup = np.ones(shape, dtype=bool)
     return score(ratio, bands, support=sup, max_without_support=cfg["max_points_without_support"])
 
 
@@ -107,10 +118,11 @@ def respiratory(pf_pts, sf_pts=None, ecmo=None, cfg: dict | None = None) -> np.n
     SpO2:FiO2 points are used only where no PaO2:FiO2 is available (SOFA-2 footnote f). ECMO
     scores ``cfg['ecmo_points']`` (footnote i).
     """
-    pf_pts = _arr(pf_pts)
+    shape = _shape(pf_pts, sf_pts, ecmo)
+    pf_pts = np.broadcast_to(_arr(pf_pts), shape)
     out = pf_pts.copy()
     if sf_pts is not None and cfg.get("use_sf_ratio"):
-        out = np.where(np.isnan(pf_pts), _arr(sf_pts), pf_pts)
+        out = np.where(np.isnan(pf_pts), np.broadcast_to(_arr(sf_pts), shape), pf_pts)
     if ecmo is not None and cfg.get("ecmo_points"):
         e = _bool(ecmo, out.shape)
         out = np.where(e, fmax(out, np.full(out.shape, float(cfg["ecmo_points"]))), out)
@@ -144,9 +156,8 @@ def cardiovascular_sofa2(
         * another agent alone -> ``other_agent_alone_points``
         * no vasoactive drug: MAP bands (or footnote m bands if ``map_only_fallback``)
     """
-    map_min = _arr(map_min)
-    shape = np.broadcast_shapes(map_min.shape, _arr(ne_epi).shape, _arr(dopamine).shape)
-    map_min = np.broadcast_to(map_min, shape)
+    shape = _shape(map_min, ne_epi, dopamine, other_agent, mechanical)
+    map_min = np.broadcast_to(_arr(map_min), shape)
     ne_epi = np.nan_to_num(np.broadcast_to(_arr(ne_epi), shape), nan=0.0)
     dopa = np.nan_to_num(np.broadcast_to(_arr(dopamine), shape), nan=0.0)
     other = _bool(other_agent, shape)
@@ -180,7 +191,7 @@ def cardiovascular_sofa1(norepinephrine, epinephrine, dopamine, dobutamine, map_
         "dopamine": dopamine,
         "dobutamine": dobutamine,
     }
-    shape = np.broadcast_shapes(map_min.shape, *(_arr(v).shape for v in drugs.values()))
+    shape = _shape(map_min, *drugs.values())
     out = score(np.broadcast_to(map_min, shape), cfg["map_bands"])
     drug_pts = np.zeros(shape)
     any_drug = np.zeros(shape, dtype=bool)
@@ -219,9 +230,10 @@ def urine_points_sofa2(rates: dict[int, np.ndarray], anuria=None, cfg: dict | No
             (6, 12, 24); NaN where the window cannot be evaluated.
         anuria: True where the trailing ``cfg['anuria']['window_hours']`` window had 0 mL.
     """
+    shape = _shape(anuria, *rates.values())
     out = None
     for crit in cfg["urine_output"]:
-        r = _arr(rates[int(crit["window_hours"])])
+        r = np.broadcast_to(_arr(rates[int(crit["window_hours"])]), shape)
         pts = score(r, [{"points": crit["points"], "op": crit["op"], "value": crit["value"]}])
         out = pts if out is None else fmax(out, pts)
     if anuria is not None and cfg.get("anuria"):
@@ -232,9 +244,10 @@ def urine_points_sofa2(rates: dict[int, np.ndarray], anuria=None, cfg: dict | No
 
 def kidney_sofa2(creatinine_max, urine_pts, rrt, cfg: dict) -> np.ndarray:
     """SOFA-2 kidney component: worst of creatinine, urine output and RRT (-> 4)."""
-    cr = score(creatinine_max, cfg["creatinine_bands"])
-    out = fmax(cr, urine_pts)
-    r = _bool(rrt, out.shape)
+    shape = _shape(creatinine_max, urine_pts, rrt)
+    cr = score(np.broadcast_to(_arr(creatinine_max), shape), cfg["creatinine_bands"])
+    out = fmax(cr, np.broadcast_to(_arr(urine_pts), shape))
+    r = _bool(rrt, shape)
     return np.where(r, float(cfg["rrt_points"]), out)
 
 
@@ -259,10 +272,12 @@ def rrt_criteria_met(creatinine_max, oliguria, potassium_max, ph_min, bicarbonat
     ``oliguria`` is true where the oliguria rule (< 0.3 mL/kg/h over 6 h) was met.
     """
     rule = cfg["rrt_criteria"]
-    cr = _test(creatinine_max, rule["creatinine"])
-    olig = _bool(oliguria, cr.shape)
-    k = _test(potassium_max, rule["potassium"])
-    acid = _test(ph_min, rule["ph"]) & _test(bicarbonate_min, rule["bicarbonate"])
+    shape = _shape(creatinine_max, oliguria, potassium_max, ph_min, bicarbonate_min)
+    b = lambda x: np.broadcast_to(_arr(x), shape)  # noqa: E731
+    cr = _test(b(creatinine_max), rule["creatinine"])
+    olig = _bool(oliguria, shape)
+    k = _test(b(potassium_max), rule["potassium"])
+    acid = _test(b(ph_min), rule["ph"]) & _test(b(bicarbonate_min), rule["bicarbonate"])
     return (cr | olig) & (k | acid)
 
 
