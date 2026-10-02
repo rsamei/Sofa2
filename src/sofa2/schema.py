@@ -10,9 +10,11 @@ Tables
                   weight_kg (optional), chronic_rrt (optional bool)
 ``measurements``  stay_id, time, variable, value, specimen_id (optional; pairs PaO2 with the
                   FiO2 of the same blood gas)
-``gcs``           stay_id, time, eye, verbal, motor, total, verbal_unassessable
-``infusions``     stay_id, start, end, drug, rate (vasoactive drugs in ug/kg/min; vasopressin in
-                  units/min; sedatives in any unit, only presence is used)
+``gcs``           stay_id, time, eye, verbal, motor, total, unassessable (true when the three
+                  domains cannot all be evaluated, eg verbal response in an intubated patient)
+``infusions``     stay_id, start, end, drug, rate (catecholamines, dopamine, dobutamine, milrinone
+                  in ug/kg/min; for vasopressin, angiotensin II, levosimendan and sedatives only
+                  rate > 0 is used, in any unit)
 ``medications``   stay_id, time, drug (discrete administrations, eg delirium drugs)
 ``support``       stay_id, start, end, type (respiratory, mechanical circulatory and renal support)
 ``urine_output``  stay_id, time, volume_ml
@@ -48,6 +50,8 @@ VASOACTIVE_DRUGS = (
     "phenylephrine",
     "milrinone",
     "levosimendan",
+    "angiotensin_ii",
+    "isoproterenol",
 )
 SEDATIVE_DRUGS = ("propofol", "midazolam", "lorazepam", "dexmedetomidine")
 INFUSION_DRUGS = VASOACTIVE_DRUGS + SEDATIVE_DRUGS
@@ -61,11 +65,13 @@ SUPPORT_TYPES = (
     "hfnc",
     "home_vent",
     # extracorporeal and mechanical circulatory
+    "ecmo",  # configuration not recorded
     "ecmo_vv",
-    "ecmo_va",
+    "ecmo_va",  # includes VAV
     "iabp",
     "impella",
     "lvad",
+    "rvad",
     # renal
     "rrt_continuous",
     "rrt_intermittent",
@@ -81,7 +87,7 @@ COLUMNS: dict[str, dict[str, str]] = {
         "verbal": "float",
         "motor": "float",
         "total": "float",
-        "verbal_unassessable": "bool",
+        "unassessable": "bool",
     },
     "infusions": {"stay_id": "id", "start": "time", "end": "time", "drug": "str", "rate": "float"},
     "medications": {"stay_id": "id", "time": "time", "drug": "str"},

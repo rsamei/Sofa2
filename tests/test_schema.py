@@ -33,7 +33,7 @@ def test_implausible_values_dropped_with_warning():
 
 def test_gcs_out_of_range_set_missing():
     g = pd.DataFrame({"stay_id": [1], "time": ["2100-01-01 09:00"], "eye": [4], "verbal": [5],
-                      "motor": [7], "total": [15], "verbal_unassessable": [False]})
+                      "motor": [7], "total": [15], "unassessable": [False]})
     with pytest.warns(UserWarning, match="motor"):
         d = ICUData(stays=_stays(), gcs=g).validate()
     assert pd.isna(d.gcs["motor"].iloc[0])

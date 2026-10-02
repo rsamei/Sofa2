@@ -27,8 +27,9 @@ def brain_hourly(
     """Hourly brain points for one score.
 
     * GCS charted during a sedative infusion is ignored.
-    * A complete GCS scores on its total; a GCS whose verbal domain cannot be assessed scores
-      on the motor response when the score allows it (SOFA-2 footnote d). Within an hour the
+    * A complete GCS scores on its total; a GCS flagged ``unassessable`` (the three domains
+      cannot be evaluated, eg intubated) scores on the motor response when the score allows it
+      (SOFA-2 footnote d). Incompletely documented charts without the flag are not used. Within an hour the
       worst complete total and the best motor response of incomplete assessments are combined
       by taking the worse of the two.
     * In hours with sedation and no unsedated GCS, the last unsedated GCS points before are
@@ -46,7 +47,10 @@ def brain_hourly(
     g = gcs.copy()
     comp = g["eye"] + g["verbal"] + g["motor"]
     g["total"] = g["total"].fillna(comp)
-    g["assessable"] = ~g["verbal_unassessable"] & g["total"].notna()
+    g["assessable"] = ~g["unassessable"] & g["total"].notna()
+    # charts that are neither complete nor flagged unassessable (incomplete documentation) are
+    # not used
+    g = g[g["assessable"] | g["unassessable"]]
     g = g[~support_at(g, sed, ["sedation"])]
     g["points"] = gcs_points(
         g["total"].to_numpy(), g["motor"].to_numpy(), g["assessable"].to_numpy(), bc

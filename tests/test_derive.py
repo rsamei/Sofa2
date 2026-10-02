@@ -194,7 +194,7 @@ def test_urine_in_pipeline_sofa1_daily_volume():
 # ------------------------------------------------------------------ brain
 def gcs(rows):
     return pd.DataFrame(rows, columns=["stay_id", "time", "eye", "verbal", "motor", "total",
-                                       "verbal_unassessable"])
+                                       "unassessable"])
 
 
 def test_presedation_gcs_carried():
@@ -251,3 +251,10 @@ def test_pre_icu_lab_window():
     r = score_day1(measurements=m)
     assert r["sofa2_kidney"] == 3   # 5 h before admission -> day 1
     assert r["sofa2_liver"] == 0    # 7 h before -> outside the 6-h lookback
+
+
+def test_incomplete_gcs_without_flag_ignored():
+    g = gcs([(1, t(1), None, None, 3, None, False)])
+    r = score_day1(gcs=g)
+    assert r["sofa2_brain"] == 0
+    assert r["sofa2_brain_status"] == "imputed_normal"

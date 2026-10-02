@@ -63,7 +63,7 @@ respiratory:
   transient_minutes: 60
   # Footnote i: ECMO (all forms) scores 4 in the respiratory component.
   ecmo_points: 4
-  ecmo_types: [ecmo_vv, ecmo_va]
+  ecmo_types: [ecmo, ecmo_vv, ecmo_va]
 
 cardiovascular:
   # Table 2: MAP >= 70 -> 0; MAP < 70 -> 1 (no vasopressor or inotrope).
@@ -78,7 +78,8 @@ cardiovascular:
   other_agent_adds_points: 1
   # Any dose of another vasopressor or inotrope (without norepinephrine/epinephrine) -> 2.
   other_agent_alone_points: 2
-  other_agents: [dobutamine, vasopressin, phenylephrine, milrinone, levosimendan]
+  other_agents: [dobutamine, vasopressin, phenylephrine, milrinone, levosimendan, angiotensin_ii,
+                 isoproterenol]
   # Footnote l: dopamine as a single vasopressor: <=20 -> 2; >20-40 -> 3; >40 -> 4 (ug/kg/min).
   # Dopamine given with norepinephrine/epinephrine counts as an "other" agent.
   # Dopamine with another non-norepinephrine/epinephrine agent: dopamine bands, and the other
@@ -89,7 +90,8 @@ cardiovascular:
     - {points: 4, op: ">", value: 40}
   # Footnotes i and n: mechanical cardiovascular support (VA ECMO, IABP, LVAD, microaxial pump).
   mechanical_support_points: 4
-  mechanical_support_types: [ecmo_va, iabp, lvad, impella]
+  # VA (and VAV) ECMO is taken as a cardiovascular indication; VV or unspecified ECMO is not.
+  mechanical_support_types: [ecmo_va, iabp, impella, lvad, rvad]
   # Footnote j: vasopressors count only if given by continuous infusion for at least 1 hour.
   min_infusion_minutes: 60
   # Footnote m: MAP-only scoring when vasoactive drugs are unavailable or precluded by a ceiling

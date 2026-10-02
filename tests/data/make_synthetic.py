@@ -50,7 +50,7 @@ gcs = pd.DataFrame(
         (1, t(36), 3, None, 5, None, True),  # intubated, verbal not assessable, motor 5
         (4, t(2), 2, 2, 3, 7, False),
     ],
-    columns=["stay_id", "time", "eye", "verbal", "motor", "total", "verbal_unassessable"],
+    columns=["stay_id", "time", "eye", "verbal", "motor", "total", "unassessable"],
 )
 
 infusions = pd.DataFrame(
