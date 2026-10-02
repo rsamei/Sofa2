@@ -33,6 +33,12 @@ class Band:
     requires_support: bool = False
 
 
+def _strict_bool(val: Any, name: str) -> bool:
+    if not isinstance(val, bool):
+        raise ConfigError(f"{name}: requires_support must be true or false, got {val!r}")
+    return val
+
+
 def parse_bands(raw: list[Mapping[str, Any]], name: str = "bands") -> list[Band]:
     """Parse and validate a band list.
 
@@ -48,7 +54,7 @@ def parse_bands(raw: list[Mapping[str, Any]], name: str = "bands") -> list[Band]
                 points=int(item["points"]),
                 op=str(item["op"]),
                 value=float(item["value"]),
-                requires_support=bool(item.get("requires_support", False)),
+                requires_support=_strict_bool(item.get("requires_support", False), name),
             )
         except (KeyError, TypeError) as exc:
             raise ConfigError(f"{name}: malformed entry {item!r}") from exc
@@ -90,6 +96,12 @@ def _validate_tree(node: Any, path: str) -> None:
             sub = f"{path}.{key}"
             if str(key).endswith("bands") and isinstance(val, list):
                 parse_bands(val, sub)
+            elif str(key) == "urine_output" and isinstance(val, list):
+                for i, crit in enumerate(val):
+                    if int(crit.get("window_hours", 0)) <= 0:
+                        raise ConfigError(f"{sub}[{i}]: window_hours must be positive")
+                    parse_bands([{k: crit[k] for k in ("points", "op", "value") if k in crit}],
+                                f"{sub}[{i}]")
             elif str(key) == "drug_bands" and isinstance(val, dict):
                 for drug, bands in val.items():
                     parse_bands(bands, f"{sub}.{drug}")

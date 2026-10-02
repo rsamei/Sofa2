@@ -20,3 +20,7 @@ def test_support_cap():
     vals = [150, 75, 150, 75]
     sup = [True, True, False, False]
     np.testing.assert_array_equal(score(vals, BANDS, support=sup), [3, 4, 2, 2])
+
+
+def test_nan_support_means_no_support():
+    assert score([100], BANDS, support=[np.nan])[0] == 2

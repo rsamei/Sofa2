@@ -40,7 +40,7 @@ def score(values, bands, support=None, max_without_support: int | None = None) -
     has_support = (
         np.ones(v.shape, dtype=bool)
         if support is None
-        else np.broadcast_to(np.asarray(support, dtype=bool), v.shape)
+        else np.broadcast_to(np.nan_to_num(np.asarray(support, dtype=float), nan=0.0) > 0, v.shape)
     )
     if max_without_support is None:
         free = [b.points for b in bands if not b.requires_support]

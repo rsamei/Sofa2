@@ -56,7 +56,7 @@ respiratory:
   max_points_without_support: 2
   allow_full_score_without_support: false
   # Footnote g: advanced ventilatory support.
-  advanced_support_types: [hfnc, cpap, bipap, niv, imv, home_vent]
+  support_types: [hfnc, cpap, bipap, niv, imv, home_vent]
   # Footnote g: changes in the ratio within 1 hour (eg, after suctioning) are not considered.
   # Implemented as: a reading is ignored if a later reading of the same ratio type within this
   # many minutes scores fewer points.

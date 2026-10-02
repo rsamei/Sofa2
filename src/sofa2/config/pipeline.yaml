@@ -10,7 +10,8 @@ windows:
 
 # Laboratory values measured up to this many hours before ICU admission count in the first hour.
 pre_icu_lab_hours: 6
-pre_icu_lab_variables: [bilirubin, creatinine, platelets, potassium, ph, bicarbonate, pao2, fio2]
+# Blood gases are not included: their respiratory-support status before ICU is often unrecorded.
+pre_icu_lab_variables: [bilirubin, creatinine, platelets, potassium, ph, bicarbonate]
 
 missing:
   # locf:   carry forward the last observed value if it is at most `locf_max_hours` older than

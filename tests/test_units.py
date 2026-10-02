@@ -11,7 +11,9 @@ def test_creatinine_and_bilirubin():
 
 
 def test_kpa():
-    assert units.kpa_to_mmhg(40) == pytest.approx(300.0, abs=0.1)
+    # Table 2 equivalences: 40 kPa = 300 mmHg, 10 kPa = 75 mmHg (exact, so cut-offs coincide)
+    assert units.kpa_to_mmhg(40) == 300.0
+    assert units.kpa_to_mmhg(10) == 75.0
 
 
 def test_fio2_fraction_and_percent():
@@ -32,6 +34,8 @@ def test_dose_units():
     assert units.dose_to_ug_kg_min(0.0001, "mg/kg/min") == pytest.approx(0.1)
     assert units.dose_to_ug_kg_min(8, "mcg/min", 80) == pytest.approx(0.1)
     assert units.dose_to_ug_kg_min(0.48, "mg/h", 80) == pytest.approx(0.1)
+    assert units.dose_to_ug_kg_min(0.48, "mg/hour", 80) == pytest.approx(0.1)
+    assert units.dose_to_ug_kg_min(6, "μg/kg/hr") == pytest.approx(0.1)
     with pytest.raises(ValueError):
         units.dose_to_ug_kg_min(8, "mcg/min")
     with pytest.raises(ValueError):
@@ -47,7 +51,7 @@ def test_to_canonical():
         }
     )
     out = units.to_canonical(df)
-    np.testing.assert_allclose(out["value"], [2.0, 2.0, 2.0, 75.0062, 0.5])
+    np.testing.assert_allclose(out["value"], [2.0, 2.0, 2.0, 75.0, 0.5])
     assert "unit" not in out
 
 

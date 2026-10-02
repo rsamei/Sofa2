@@ -22,10 +22,21 @@ def test_unknown_variable_rejected():
         ICUData(stays=_stays(), measurements=m).validate()
 
 
-def test_fio2_percent_rejected():
-    m = pd.DataFrame({"stay_id": [1], "time": ["2100-01-01 09:00"], "variable": ["fio2"], "value": [40.0]})
-    with pytest.raises(SchemaError):
-        ICUData(stays=_stays(), measurements=m).validate()
+def test_implausible_values_dropped_with_warning():
+    m = pd.DataFrame(
+        {"stay_id": [1, 1], "time": ["2100-01-01 09:00"] * 2, "variable": ["fio2", "fio2"], "value": [40.0, 0.4]}
+    )
+    with pytest.warns(UserWarning, match="fio2"):
+        d = ICUData(stays=_stays(), measurements=m).validate()
+    assert d.measurements["value"].tolist() == [0.4]
+
+
+def test_gcs_out_of_range_set_missing():
+    g = pd.DataFrame({"stay_id": [1], "time": ["2100-01-01 09:00"], "eye": [4], "verbal": [5],
+                      "motor": [7], "total": [15], "verbal_unassessable": [False]})
+    with pytest.warns(UserWarning, match="motor"):
+        d = ICUData(stays=_stays(), gcs=g).validate()
+    assert pd.isna(d.gcs["motor"].iloc[0])
 
 
 def test_unknown_stay_rejected():

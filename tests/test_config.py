@@ -46,3 +46,8 @@ def test_bad_band_in_yaml_override_rejected():
     bad = {"liver": {"bilirubin_bands": [{"points": 1, "op": ">", "value": 3}, {"points": 2, "op": ">", "value": 1}]}}
     with pytest.raises(ConfigError):
         load_config(overrides={"sofa2": bad})
+
+
+def test_requires_support_must_be_bool():
+    with pytest.raises(ConfigError):
+        parse_bands([{"points": 1, "op": "<", "value": 1, "requires_support": "false"}])

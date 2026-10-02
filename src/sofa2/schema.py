@@ -20,6 +20,7 @@ Tables
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field, fields
 
 import pandas as pd
@@ -92,7 +93,7 @@ OPTIONAL_COLUMNS: dict[str, dict[str, str]] = {
     "measurements": {"specimen_id": "id"},
 }
 
-# Plausibility ranges in canonical units; values outside are rejected by validate().
+# Plausibility ranges in canonical units; validate() drops values outside them with a warning.
 VALUE_RANGES = {
     "pao2": (0, 800),
     "fio2": (0.21, 1.0),
@@ -106,6 +107,7 @@ VALUE_RANGES = {
     "bicarbonate": (0, 80),
     "weight": (0, 700),
 }
+GCS_RANGES = {"eye": (1, 4), "verbal": (1, 5), "motor": (1, 6), "total": (3, 15)}
 
 
 class SchemaError(ValueError):
@@ -168,14 +170,25 @@ class ICUData:
         bad = set(m["variable"]) - set(MEASUREMENT_VARIABLES)
         if bad:
             raise SchemaError(f"measurements: unknown variables {sorted(bad)}")
+        drop = m["value"].isna()
         for var, (lo, hi) in VALUE_RANGES.items():
-            vals = m.loc[m["variable"] == var, "value"]
-            if ((vals < lo) | (vals > hi)).any():
-                raise SchemaError(
-                    f"measurements: {var} outside [{lo}, {hi}] (check units; see sofa2.units)"
+            bad_rows = (m["variable"] == var) & ((m["value"] < lo) | (m["value"] > hi))
+            if bad_rows.any():
+                warnings.warn(
+                    f"measurements: dropped {int(bad_rows.sum())} {var} values outside "
+                    f"[{lo}, {hi}] (check units; see sofa2.units)",
+                    stacklevel=2,
                 )
-        if m["value"].isna().any():
-            raise SchemaError("measurements: value has missing entries")
+            drop |= bad_rows
+        tables["measurements"] = m.loc[~drop].reset_index(drop=True)
+
+        g = tables["gcs"]
+        for col, (lo, hi) in GCS_RANGES.items():
+            bad_rows = (g[col] < lo) | (g[col] > hi)
+            if bad_rows.any():
+                warnings.warn(f"gcs: set {int(bad_rows.sum())} {col} values outside "
+                              f"[{lo}, {hi}] to missing", stacklevel=2)
+                g.loc[bad_rows, col] = float("nan")
 
         for name, col, allowed in (
             ("infusions", "drug", INFUSION_DRUGS),

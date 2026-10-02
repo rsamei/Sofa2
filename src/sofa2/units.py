@@ -27,8 +27,9 @@ import pandas as pd
 CREATININE_UMOL_PER_MGDL = 88.4
 #: 1 mg/dL bilirubin in umol/L (molar mass 584.66 g/mol).
 BILIRUBIN_UMOL_PER_MGDL = 17.1
-#: 1 kPa in mmHg.
-MMHG_PER_KPA = 7.50062
+#: 1 kPa in mmHg. SOFA-2 Table 2 converts with 7.5 (300 mmHg = 40 kPa, 75 mmHg = 10 kPa);
+#: the exact factor (7.50062) would move ratios charted in kPa off the published cut-offs.
+MMHG_PER_KPA = 7.5
 
 #: mg of salt equivalent to 1 mg of norepinephrine base (SOFA-2 Table 2, footnote k).
 NOREPINEPHRINE_SALT_FACTORS = {
@@ -79,18 +80,14 @@ _DOSE_UNITS: dict[str, tuple[float, bool]] = {
     "mcg/kg/min": (1.0, True),
     "mg/kg/min": (1000.0, True),
     "ug/kg/h": (1.0 / 60.0, True),
-    "mcg/kg/hour": (1.0 / 60.0, True),
     "mcg/kg/h": (1.0 / 60.0, True),
     "mg/kg/h": (1000.0 / 60.0, True),
-    "mg/kg/hour": (1000.0 / 60.0, True),
     "ug/min": (1.0, False),
     "mcg/min": (1.0, False),
     "mg/min": (1000.0, False),
     "ug/h": (1.0 / 60.0, False),
-    "mcg/hour": (1.0 / 60.0, False),
     "mcg/h": (1.0 / 60.0, False),
     "mg/h": (1000.0 / 60.0, False),
-    "mg/hour": (1000.0 / 60.0, False),
 }
 
 
@@ -105,7 +102,7 @@ def dose_to_ug_kg_min(rate, unit: str, weight_kg=None):
     Raises:
         ValueError: unknown unit, or a weight is needed but missing.
     """
-    key = unit.strip().lower().replace("µ", "u")
+    key = _norm_unit(unit).replace("hour", "h").replace("/hr", "/h")
     if key not in _DOSE_UNITS:
         raise ValueError(f"unknown dose unit {unit!r}")
     factor, per_kg = _DOSE_UNITS[key]
