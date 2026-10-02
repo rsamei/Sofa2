@@ -23,9 +23,16 @@ from sofa2.scoring import components as C
 from sofa2.scoring.bands import score
 
 ORGANS = ("respiratory", "cardiovascular", "brain", "liver", "kidney", "hemostasis")
-#: Hourly organ points from measurements only (no treatment-derived points), used to carry
-#: values forward: a recorded treatment that has stopped is not carried.
-MEAS = tuple(f"{o}_meas" for o in ORGANS)
+#: Hourly points from single measured variables (no treatment-derived points), used to carry
+#: values forward. Columns are named ``<organ>_meas`` or ``<organ>_meas_<variable>``; each
+#: variable is carried separately and the organ takes the worst carried variable.
+MEAS_PREFIX = "_meas"
+
+
+def meas_columns(columns) -> dict[str, list[str]]:
+    """Map each organ to its measurement columns."""
+    return {o: [c for c in columns if c == f"{o}_meas" or c.startswith(f"{o}_meas_")]
+            for o in ORGANS}
 
 _LAB_AGG = {
     "bilirubin": "max",
@@ -96,6 +103,7 @@ def hourly_sofa2(data: ICUData, cfg, sh: Shared) -> pd.DataFrame:
     ecmo = _flag(idx, _support_hours(data, c["respiratory"]["ecmo_types"]))
     out["respiratory"] = C.respiratory(rh["pf_pts"], rh["sf_pts"], ecmo, c["respiratory"])
     out["respiratory_meas"] = C.respiratory(rh["pf_pts"], rh["sf_pts"], None, c["respiratory"])
+    out["resp_support"] = _flag(idx, _support_hours(data, c["respiratory"]["support_types"]))
     out["pf_min"], out["sf_min"] = rh["pf_min"], rh["sf_min"]
 
     # cardiovascular
@@ -134,7 +142,8 @@ def hourly_sofa2(data: ICUData, cfg, sh: Shared) -> pd.DataFrame:
     uo_pts = C.urine_points_sofa2(rates_uo, an, kc)
     rrt = rrt_hourly(data.support, data.stays, kc).reindex(idx).to_numpy()
     out["kidney"] = C.kidney_sofa2(sh.labs["creatinine_max"], uo_pts, rrt, kc)
-    out["kidney_meas"] = C.kidney_sofa2(sh.labs["creatinine_max"], uo_pts, False, kc)
+    out["kidney_meas_creatinine"] = score(sh.labs["creatinine_max"], kc["creatinine_bands"])
+    out["kidney_meas_urine"] = uo_pts
     out["creatinine_max"] = sh.labs["creatinine_max"]
     olig = kc["rrt_criteria"]["oliguria"]
     with np.errstate(invalid="ignore"):
@@ -157,6 +166,7 @@ def hourly_sofa1(data: ICUData, cfg, sh: Shared) -> pd.DataFrame:
     rh = respiratory_hourly(sh.readings, data.support, data.stays, c).reindex(idx)
     out["respiratory"] = C.respiratory(rh["pf_pts"], None, None, c["respiratory"])
     out["respiratory_meas"] = out["respiratory"]
+    out["resp_support"] = _flag(idx, _support_hours(data, c["respiratory"]["support_types"]))
     out["pf_min"] = rh["pf_min"]
 
     cc = c["cardiovascular"]
@@ -182,7 +192,9 @@ def hourly_sofa1(data: ICUData, cfg, sh: Shared) -> pd.DataFrame:
 
     kc = c["kidney"]
     out["kidney"] = C.kidney_sofa1(sh.labs["creatinine_max"], np.nan, kc)
-    out["kidney_meas"] = out["kidney"]
     out["creatinine_max"] = sh.labs["creatinine_max"]
     out["uo_ml_day"] = sh.urine[f"mlday_{int(kc['urine_output_window_hours'])}"]
+    # carried values include the urine points (scored at window level in the score itself)
+    out["kidney_meas_creatinine"] = score(sh.labs["creatinine_max"], kc["creatinine_bands"])
+    out["kidney_meas_urine"] = score(out["uo_ml_day"], kc["urine_output_daily_bands"])
     return out

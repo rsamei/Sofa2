@@ -230,8 +230,8 @@ class ICUData:
             no_end = t["end"].isna()
             if no_end.any():
                 t = t.copy()
-                t.loc[no_end, "end"] = t.loc[no_end, "stay_id"].map(
-                    stays.set_index("stay_id")["outtime"])
+                out = t.loc[no_end, "stay_id"].map(stays.set_index("stay_id")["outtime"])
+                t.loc[no_end, "end"] = out.where(out >= t.loc[no_end, "start"], t.loc[no_end, "start"])
             if (t["end"] < t["start"]).any():
                 raise SchemaError(f"{name}: end before start")
             tables[name] = t.reset_index(drop=True)

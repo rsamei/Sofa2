@@ -51,8 +51,9 @@ def urine_windows(
     first chart, since ICU admission). A window of W hours ending at time T uses the charts with
     time in (T - W, T]: their volume and their summed collection intervals (coverage). With
     ``urine_output.require_full_coverage`` the window is evaluated only when the coverage is at
-    least W hours. Windows are evaluated at every chart time and at every hour end; an
-    evaluation at time T belongs to the hour (start, end] that contains T.
+    least W hours. Windows are evaluated at every chart time T (a window ending between charts
+    would include uncovered time after the last chart); the evaluation belongs to the hour
+    (start, end] that contains T.
 
     Returns:
         DataFrame indexed by (stay_id, hr) with ``weight`` (kg, at the hour end) and, per window
@@ -74,9 +75,9 @@ def urine_windows(
     prev = u.groupby("stay_id")["time"].shift().fillna(u["stay_id"].map(intime))
     u["interval_h"] = (u["time"] - prev) / HOUR
 
-    # evaluation times: hour ends and chart times, with the weight at each
-    ev = pd.concat([grid[["stay_id", "time"]], u[["stay_id", "time"]]], ignore_index=True)
-    ev = ev.drop_duplicates().sort_values(["stay_id", "time"], kind="stable").reset_index(drop=True)
+    # evaluation times: chart times, with the weight at each
+    ev = u[["stay_id", "time"]].drop_duplicates()
+    ev = ev.sort_values(["stay_id", "time"], kind="stable").reset_index(drop=True)
     ev["weight"] = weight_at(ev, stays, measurements, pcfg)
     nh = ev["stay_id"].map(n_hours(stays))
     hr = np.ceil((ev["time"] - ev["stay_id"].map(intime)) / HOUR).astype(int) - 1
@@ -102,8 +103,9 @@ def urine_windows(
             vol, cov, n = cv[hi] - cv[lo], ci[hi] - ci[lo], hi - lo
             ok = (n > 0) & ((cov >= w - 1e-9) if full else (cov > 0))
             with np.errstate(divide="ignore", invalid="ignore"):
-                cols[f"rate_{w}"][pos] = np.where(ok & (wt > 0), vol / cov / wt, np.nan)
-                cols[f"mlday_{w}"][pos] = np.where(ok, vol / cov * 24.0, np.nan)
+                # rounded so that float error cannot cross a band edge (eg 499.9999... mL/day)
+                cols[f"rate_{w}"][pos] = np.round(np.where(ok & (wt > 0), vol / cov / wt, np.nan), 9)
+                cols[f"mlday_{w}"][pos] = np.round(np.where(ok, vol / cov * 24.0, np.nan), 6)
             cols[f"anuria_{w}"][pos] = ok & (vol == 0) & (n >= min_charts)
     ev = ev.assign(**cols)
     grp = ev.groupby(["stay_id", "hr"])

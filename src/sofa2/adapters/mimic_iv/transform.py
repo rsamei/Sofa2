@@ -40,6 +40,7 @@ def stays(raw_stays: pd.DataFrame, chronic: pd.DataFrame, iv: pd.DataFrame) -> p
 
 # ------------------------------------------------------------------------------ measurements
 def measurements(ce: pd.DataFrame, le: pd.DataFrame, mp: dict) -> pd.DataFrame:
+    """MAP, SpO2, FiO2 and weight from chartevents; labs and arterial PaO2 from labevents."""
     c, l = mp["chartevents"], mp["labevents"]
     parts = []
     v = ce["valuenum"]
@@ -97,6 +98,8 @@ def _fio2_fraction(x: pd.Series) -> pd.Series:
 
 # ------------------------------------------------------------------------------------- GCS
 def gcs(ce: pd.DataFrame, mp: dict) -> pd.DataFrame:
+    """One row per charting time with eye, verbal, motor; verbal 'No Response-ETT' sets
+    ``unassessable``; the total only when all three are charted and assessable."""
     c = mp["chartevents"]
     g = ce[ce["itemid"].isin([c["gcs_eye"], c["gcs_verbal"], c["gcs_motor"]])].copy()
     if g.empty:
@@ -120,6 +123,7 @@ def gcs(ce: pd.DataFrame, mp: dict) -> pd.DataFrame:
 
 # ------------------------------------------------------------------------------- infusions
 def infusions(iv: pd.DataFrame, mp: dict) -> pd.DataFrame:
+    """Continuous infusions (rate > 0) with dose-scored drugs converted to ug/kg/min (base)."""
     m = mp["inputevents"]
     drug_of = _invert(m["drugs"])
     x = iv[iv["itemid"].isin(list(drug_of)) & (iv["rate"] > 0) & iv["endtime"].notna()].copy()
@@ -157,6 +161,7 @@ def infusions(iv: pd.DataFrame, mp: dict) -> pd.DataFrame:
 
 # ----------------------------------------------------------------------------- medications
 def medications(iv: pd.DataFrame, emar: pd.DataFrame, mp: dict) -> pd.DataFrame:
+    """Delirium-drug administrations from inputevents boluses and eMAR."""
     bolus_of = _invert(mp["inputevents"]["bolus_drugs"])
     b = iv[iv["itemid"].isin(list(bolus_of))]
     parts = [pd.DataFrame({"stay_id": b["stay_id"], "time": b["starttime"],
@@ -229,6 +234,7 @@ def ventilation_episodes(status: pd.DataFrame, gap_hours: float) -> pd.DataFrame
 
 
 def support(ce: pd.DataFrame, pe: pd.DataFrame, iv: pd.DataFrame, mp: dict) -> pd.DataFrame:
+    """Respiratory support episodes, ECMO, mechanical circulatory support and RRT intervals."""
     c, vm = mp["chartevents"], mp["ventilation"]
     parts = []
 
@@ -272,6 +278,7 @@ def support(ce: pd.DataFrame, pe: pd.DataFrame, iv: pd.DataFrame, mp: dict) -> p
 
 # ---------------------------------------------------------------------------- urine output
 def urine_output(oe: pd.DataFrame, mp: dict) -> pd.DataFrame:
+    """Urine volume per charting time (irrigant in subtracted, negative sums set to 0)."""
     o = mp["outputevents"]
     x = oe[oe["itemid"].isin(o["urine"] + o["urine_subtract"])].copy()
     x["value"] = pd.to_numeric(x["value"], errors="coerce")
@@ -286,6 +293,11 @@ def urine_output(oe: pd.DataFrame, mp: dict) -> pd.DataFrame:
 def to_icudata(raw: dict[str, pd.DataFrame], mp: dict) -> ICUData:
     """Build :class:`ICUData` from the raw extracts (keys as the SQL file names)."""
     raw = {k: v.copy() for k, v in raw.items()}
+    # only events of stays that passed the stays query (valid intime/outtime)
+    keep = set(raw["stays"]["stay_id"])
+    for key in ("chronic_rrt", "chartevents", "labevents", "inputevents", "outputevents",
+                "procedureevents", "emar"):
+        raw[key] = raw[key][raw[key]["stay_id"].isin(keep)]
     for key in ("chartevents", "labevents", "inputevents", "outputevents", "procedureevents", "emar"):
         df = raw[key]
         for col in ("charttime", "starttime", "endtime"):

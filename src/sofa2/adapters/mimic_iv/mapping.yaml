@@ -7,12 +7,12 @@ chartevents:
   map_range: [0, 300]                  # exclusive bounds, as mimic-code vitalsign
   spo2: [220277]                       # O2 saturation pulseoxymetry
   spo2_range: [0, 100]                 # (0, 100]
-  fio2: [223835]                       # Inspired O2 Fraction (charted as % or fraction)
+  fio2: [223835]                       # Inspired O2 Fraction: 0.21-1 kept, 21-100 divided by 100
   weight: [226512, 224639]             # Admission Weight (Kg), Daily Weight
   weight_lbs: [226531]                 # Admission Weight (lbs.), converted to kg
-  gcs_eye: 220739
-  gcs_verbal: 223900
-  gcs_motor: 223901
+  gcs_eye: 220739                      # GCS - Eye Opening
+  gcs_verbal: 223900                   # GCS - Verbal Response
+  gcs_motor: 223901                    # GCS - Motor Response
   gcs_verbal_unassessable_values: ["No Response-ETT"]
   o2_device: 226732                    # O2 Delivery Device(s)
   vent_mode: 223849                    # Ventilator Mode
@@ -34,13 +34,16 @@ chartevents:
   rrt_active:
     rrt_intermittent: [226499, 225806, 225807]   # Hemodialysis Output, Volume In (PD), Volume Out (PD)
     rrt_continuous: [224154, 225183, 227438, 224191, 228004, 228005, 228006, 224144, 224145, 224153, 226457]
+    # Dialysate Rate, Current Goal, Volume not removed, Hourly Patient Fluid Removal,
+    # Citrate (ACD-A), PBP (Prefilter) Replacement Rate, Post Filter Replacement Rate,
+    # Blood Flow (ml/min), Heparin Dose (per hour), Replacement Rate, Ultrafiltrate Output
   rrt_pd_catheter_status: 225965               # Peritoneal Dialysis Catheter Status
   rrt_pd_in_use_values: ["In use"]
 
 labevents:
-  creatinine: [50912]
+  creatinine: [50912]                  # Creatinine
   bilirubin: [50885]                   # Bilirubin, Total
-  platelets: [51265]
+  platelets: [51265]                   # Platelet Count
   potassium: [50971, 50822]            # Potassium (chemistry), Potassium, Whole Blood (blood gas)
   bicarbonate: [50882, 50803]          # Bicarbonate (chemistry), Calculated Bicarbonate, Whole Blood
   ph: [50820]                          # pH (blood gas, any specimen)

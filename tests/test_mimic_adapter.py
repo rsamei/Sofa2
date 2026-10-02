@@ -51,7 +51,8 @@ def test_tables(data):
 
 EXPECTED = {
     (1000, 0): ([3, 3, 2, 0, 3, 4], [3, 4, 0, 0, 3, 3]),
-    (1000, 1): ([3, 2, 1, 0, 3, 4], [3, 3, 0, 0, 2, 3]),
+    # day 2: IMV ended at 24 h, so the carried PaO2:FiO2 140 is capped at 2 (footnote h)
+    (1000, 1): ([2, 2, 1, 0, 3, 4], [2, 3, 0, 0, 3, 3]),  # SOFA-1 urine 460 mL/day carried
     (2000, 0): ([4, 4, 0, 0, 4, 0], [0, 0, 0, 0, 1, 0]),
 }
 

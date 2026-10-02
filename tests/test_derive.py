@@ -87,10 +87,11 @@ def test_sf_not_used_in_hour_with_pf():
 
 
 def test_transient_reading_dropped_footnote_g():
-    r = pd.DataFrame({"stay_id": 1, "kind": "pf", "time": [t(1), t(1.5), t(3), t(4.5)],
-                      "points": [3, 1, 3, 3]})
+    r = pd.DataFrame({"stay_id": 1, "kind": "pf", "time": [t(1), t(1.5), t(3), t(4.5), t(6), t(6.5)],
+                      "ratio": [120, 280, 120, 120, 140, 140], "points": [3, 1, 3, 3, 3, 2]})
     kept = drop_transient(r, 60)
-    assert kept["time"].tolist() == [t(1.5), t(3), t(4.5)]
+    # 6 h: same ratio, fewer points only because support stopped -> kept
+    assert kept["time"].tolist() == [t(1.5), t(3), t(4.5), t(6), t(6.5)]
 
 
 def test_transient_rule_in_pipeline():
@@ -167,10 +168,11 @@ def test_urine_coverage_rule():
     uw = urine_windows(u, s, meas([]), CFG.pipeline)
     # at the end of hour 5 (6:00): 120 mL over 6 h / 100 kg = 0.2 mL/kg/h
     assert uw.loc[(1, 5), "rate_6"] == pytest.approx(0.2)
-    # end of hour 6 (7:00): charts at 2, 4, 6 h are in (1, 7]; their intervals sum to 6 h -> ok
-    assert uw.loc[(1, 6), "rate_6"] == pytest.approx(0.2)
-    # end of hour 7 (8:00): only charts at 4 and 6 h in (2, 8]: 4 h of coverage -> not scored
-    assert np.isnan(uw.loc[(1, 7), "rate_6"])
+    # hours without a chart are not evaluated (a window ending after the last chart would
+    # include uncovered time)
+    assert np.isnan(uw.loc[(1, 6), "rate_6"])
+    # chart at 4 h: (-2, 4] has charts at 2 and 4 h covering 4 h only -> not scored
+    assert np.isnan(uw.loc[(1, 3), "rate_6"])
     assert np.isnan(uw.loc[(1, 5), "rate_12"])
 
 
@@ -329,3 +331,33 @@ def test_hourly_locf():
     assert h.loc[25, "sofa2_kidney_status"] == "carried_forward"  # window 2-25, last obs hour 1
     assert h.loc[25, "sofa2_kidney"] == 2
     assert h.loc[49, "sofa2_kidney_status"] == "imputed_normal"   # 26-49: 25 h > 24 h
+
+
+def test_hour_end_does_not_reuse_finished_collection():
+    # 0.4 mL/kg/h collected 12-20 h; next chart at 28 h is 1.25 mL/kg/h: day 2 is normal
+    u = urine([4, 8, 12, 20, 28, 32, 36, 40, 44, 48], [160, 160, 160, 320, 800, 500, 500, 500, 500, 500])
+    r = compute_scores(ICUData(stays=stays(48, weight_kg=100), urine_output=u)).set_index("window_index")
+    assert r.loc[1, "sofa2_kidney"] == 0
+
+
+def test_carry_per_variable():
+    # creatinine 2.5 at 1 h (2 points), normal urine charts until 24 h: day 2 carries 2
+    m = meas([(1, t(1), "creatinine", 2.5)])
+    u = urine(range(1, 25), [100.0] * 24)
+    r = compute_scores(ICUData(stays=stays(48, weight_kg=80), measurements=m, urine_output=u)
+                       ).set_index("window_index")
+    assert r.loc[1, "sofa2_kidney"] == 2 and r.loc[1, "sofa2_kidney_status"] == "carried_forward"
+
+
+def test_carried_respiratory_capped_without_support():
+    sup = pd.DataFrame({"stay_id": [1], "start": [t(0)], "end": [t(20)], "type": ["imv"]})
+    m = meas([(1, t(4), "fio2", 0.5), (1, t(5), "pao2", 70)])
+    r = compute_scores(ICUData(stays=stays(48), measurements=m, support=sup)).set_index("window_index")
+    assert r.loc[0, "sofa2_respiratory"] == 3
+    assert r.loc[1, "sofa2_respiratory"] == 2 and r.loc[1, "sofa1_respiratory"] == 2
+
+
+def test_open_interval_after_discharge_is_ignored():
+    s = pd.DataFrame({"stay_id": [1], "start": [t(30)], "end": [pd.NaT], "type": ["imv"]})
+    r = score_day1(support=s)
+    assert r["sofa2_respiratory"] == 0

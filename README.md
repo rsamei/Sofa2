@@ -55,7 +55,7 @@ Command line:
 ```bash
 sofa2 score --source internal --path tests/data/synthetic --out scores.csv
 sofa2 score --source mimic-local --path /data/mimiciv/3.1 --batch-size 2000 --out scores.parquet
-sofa2 score --source mimic-bigquery --project my-gcp-project --freq hourly --out hourly.parquet
+sofa2 score --source mimic-bigquery --project my-gcp-project --batch-size 5000 --out scores.parquet
 ```
 
 Options: `--scores sofa2,sofa1`, `--missing locf|normal|none`, `--values` (add the worst raw values
@@ -131,15 +131,17 @@ A `unit` column in `measurements` is converted automatically.
 
 ### Implementation decisions
 
-These rules are not fully specified by the papers. Each was agreed before implementation and can
-be changed in the YAML.
+These rules are not fully specified by the papers. Each was agreed before implementation.
+Thresholds, drug lists, time limits and switches are in the YAML. The pairing logic, the
+concurrent norepinephrine + epinephrine sum, dopamine as an "other" agent, SpO2:FiO2 only
+without PaO2:FiO2, and the lowest-rate-per-hour rule are fixed in code.
 
 **Respiratory**
 - PaO2 is paired with the FiO2 of the same blood gas, else with the last FiO2 up to 4 h before.
 - SpO2:FiO2 (SOFA-2 footnote f) is used only in hours without a PaO2:FiO2, only with SpO2 < 98%,
   and with an FiO2 charted up to 1 h before.
 - Footnote g (changes within 1 h, eg after suctioning): a reading is ignored if a later reading
-  of the same kind within 60 min scores fewer points.
+  of the same kind within 60 min has a higher ratio and scores fewer points.
 - Advanced respiratory support (footnote g) is HFNC, CPAP, BiPAP, NIV, IMV or home ventilation.
   For the original SOFA, "respiratory support" is IMV, NIV, CPAP, BiPAP or home ventilation (not
   HFNC).
@@ -161,8 +163,9 @@ be changed in the YAML.
 
 **Brain**
 - GCS charted during a sedative infusion (propofol, midazolam, lorazepam, dexmedetomidine) is
-  ignored. In sedated hours the last GCS before sedation is carried, with no time cap; with
-  none, the score is 0 (footnote c). The original SOFA uses the same carry.
+  ignored. In sedated hours the last GCS before sedation is carried, with no time cap. With
+  none, the hour has no GCS and is handled as missing, which gives 0 under `locf` and `normal`
+  (footnote c). The original SOFA uses the same carry.
 - A GCS flagged unassessable (eg intubated) scores on the motor response in SOFA-2 only
   (footnote d): M6 → 0, M5 → 1, M4 → 2, M3 → 3, M2/M1 → 4.
 - Delirium drugs (haloperidol, quetiapine, olanzapine, risperidone, ziprasidone) score at least
@@ -173,10 +176,11 @@ be changed in the YAML.
   weight.
   - A chart's collection interval runs from the previous chart (the first: from admission).
   - The window is scored only when the intervals cover it fully.
-  - Windows are evaluated at every chart time and every hour end. An hour takes its lowest
-    evaluable rate.
-  - On day 1, a 24 h window is fully covered only if a chart falls exactly 24 h after admission,
-    so the 24-hour criteria rarely apply on day 1.
+  - Windows are evaluated at every chart time, because a window ending between charts would
+    include uncovered time. An hour takes its lowest evaluable rate.
+  - On day 1, a 24 h window is fully covered only if a chart falls exactly 24 h after
+    admission. In practice the 24-hour criteria therefore never apply on day 1: 0 of 140 day-1
+    windows in the MIMIC-IV demo.
 - Anuria means 0 mL over a covered 12 h window with at least 2 charts.
 - Weight is the last weight charted, else the first of the stay, else `stays.weight_kg`.
 - RRT scores 4 while a session runs.
@@ -186,8 +190,8 @@ be changed in the YAML.
 - The original SOFA uses the latest evaluable 24-hour urine volume in the window (mL/day).
 
 **Labs and boundaries**
-- Laboratory values up to 6 h before ICU admission count in hour 0. Blood gases are excluded
-  from this lookback.
+- Laboratory values up to 6 h before ICU admission count in hour 0. PaO2, FiO2 and SpO2 are
+  excluded from this lookback, because pre-ICU support status is often unrecorded.
 - The original SOFA's printed ranges are read as half-open intervals, so 1.95 mg/dL bilirubin
   scores 1. Bilirubin 12.0 and creatinine 5.0 score 4, consistent with Vincent's µmol/L columns.
 - SI creatinine is converted with 88.4. Table 2's rounded µmol/L cut-offs (110/170/300) therefore
@@ -204,6 +208,10 @@ be changed in the YAML.
   - Only measurements are carried: PaO2:FiO2, SpO2:FiO2, MAP, GCS, labs and urine output.
   - Points from a treatment that has stopped are not carried, because its record shows it ended.
     This covers ECMO, vasoactive drugs, mechanical support, RRT and delirium drugs.
+  - Each measured variable is carried separately (eg creatinine and urine output), and the
+    organ takes the worst.
+  - A carried respiratory score is capped at 2 when the window has no respiratory support
+    (footnote h).
 - `normal`: missing organs score 0.
 - `none`: missing organs stay empty, and so does the total.
 
@@ -217,11 +225,11 @@ These rules are not implemented, or are off by default:
 
 ## MIMIC-IV adapter
 
-`src/sofa2/adapters/mimic_iv/mapping.yaml` lists every item ID with its label. They were checked
-against `d_items`/`d_labitems` of the MIMIC-IV demo.
+`src/sofa2/adapters/mimic_iv/mapping.yaml` lists every item ID used. All were checked against
+`d_items`/`d_labitems` of the MIMIC-IV demo.
 
 Where a rule comes from MIT-LCP mimic-code, the mapping says so: ventilation episodes,
-urine-output items, RRT items, FiO2 cleaning and lab ranges. Deviations from mimic-code:
+urine-output items, RRT items and lab ranges. Deviations from mimic-code:
 - Only arterial PaO2 is used.
 - **Ventilation:**
   - All oxygen devices charted at a time are considered.
@@ -232,9 +240,10 @@ urine-output items, RRT items, FiO2 cleaning and lab ranges. Deviations from mim
 - **RRT:** dialysis catheter charts alone are not RRT.
 - **Mechanical circulatory support:** only items measured while the device runs (flows,
   pressures, speeds).
-- **Infusions:** rows in rate units other than mcg/kg/min or mcg/min are dropped with a
-  warning.
-- **Weight:** charted weight (kg, or lbs converted), else the first `inputevents.patientweight`.
+- **Infusions:** for dose-scored drugs (catecholamines, dopamine, dobutamine, phenylephrine,
+  milrinone), rows in rate units other than mcg/kg/min or mcg/min are dropped with a warning.
+- **Weight:** charted weight (kg, or lbs converted), else the first `inputevents.patientweight`
+  of the extracted drug rows.
 - **eMAR:** depot antipsychotics (decanoate, pamoate, Consta, microspheres) are not delirium
   treatment.
 

@@ -163,7 +163,8 @@ class MimicIVAdapter:
 
     def stay_ids(self) -> list[int]:
         """All ICU stay ids (eg to process MIMIC-IV in batches)."""
-        sql = f"SELECT stay_id FROM {self.icu}.icustays ORDER BY stay_id"
+        sql = (f"SELECT stay_id FROM {self.icu}.icustays WHERE intime IS NOT NULL AND outtime IS "
+               f"NOT NULL AND outtime > intime ORDER BY stay_id")
         return self.runner(sql)["stay_id"].astype(int).tolist()
 
     def extract(self, stay_ids: Sequence[int] | None = None) -> dict[str, pd.DataFrame]:

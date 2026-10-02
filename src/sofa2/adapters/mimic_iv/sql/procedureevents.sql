@@ -1,4 +1,4 @@
--- Dialysis procedures with start and end times.
+-- Dialysis and ventilation procedures with start and end times.
 SELECT pe.stay_id, pe.starttime, pe.endtime, pe.itemid
 FROM {icu}.procedureevents pe
 JOIN {icu}.icustays ie ON ie.stay_id = pe.stay_id

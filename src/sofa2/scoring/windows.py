@@ -13,7 +13,7 @@ _MAX = ("respiratory", "cardiovascular", "brain", "liver", "kidney", "hemostasis
         "ne_epi_max", "dopamine_max", "bilirubin_max", "creatinine_max", "potassium_max")
 _MIN = ("pf_min", "sf_min", "map_min", "gcs_min", "platelets_min", "ph_min", "bicarbonate_min",
         "uo_rate_6h", "uo_rate_12h", "uo_rate_24h")
-_ANY = ("oliguria", "rrt", "sedated", "delirium", "presedation_gcs")
+_ANY = ("oliguria", "rrt", "sedated", "delirium", "presedation_gcs", "resp_support")
 _LAST = ("uo_ml_day",)
 
 
@@ -43,7 +43,7 @@ def aggregate(hourly: pd.DataFrame, freq: str, pcfg: dict) -> pd.DataFrame:
     Returns:
         DataFrame with stay_id, window, hr_first, hr_last and the reduced columns.
     """
-    cols = [c for c in hourly.columns if not c.endswith("_meas")]
+    cols = [c for c in hourly.columns if "_meas" not in c]
     h = hourly.copy()
     for c in _ANY:
         if c in h:
@@ -108,9 +108,9 @@ def organ_columns() -> tuple[str, ...]:
     return ORGANS
 
 
-def last_observed(hourly: pd.DataFrame, organ: str) -> pd.DataFrame:
+def last_observed(hourly: pd.DataFrame, column: str) -> pd.DataFrame:
     """Per stay-hour: hour and value of the last hour (up to and including it) with data."""
-    v = hourly[organ]
+    v = hourly[column]
     hr = pd.Series(hourly.index.get_level_values("hr"), index=hourly.index, dtype=float)
     hr = hr.where(v.notna())
     g = hr.groupby(level="stay_id")

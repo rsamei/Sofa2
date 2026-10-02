@@ -86,10 +86,12 @@ def support_at(events: pd.DataFrame, support: pd.DataFrame, types, time_col="tim
 
 
 def drop_transient(readings: pd.DataFrame, minutes: float) -> pd.DataFrame:
-    """Drop readings followed within ``minutes`` by a better-scoring reading of the same kind.
+    """Drop readings followed within ``minutes`` by a higher ratio of the same kind that scores
+    fewer points.
 
-    Implements SOFA-2 footnote g ("changes ... within 1 hour, eg after suctioning, should not
-    be considered"). Expects columns stay_id, kind, time, points.
+    Implements SOFA-2 footnote g ("changes in PaO2/FiO2 or SpO2/FiO2 within 1 hour, eg after
+    suctioning, should not be considered"). A change in support status alone (same ratio) does
+    not drop a reading. Expects columns stay_id, kind, time, ratio, points.
     """
     if readings.empty or not minutes:
         return readings
@@ -100,12 +102,13 @@ def drop_transient(readings: pd.DataFrame, minutes: float) -> pd.DataFrame:
         g = g.sort_values("time", kind="stable")
         t = g["time"].to_numpy()
         p = g["points"].to_numpy()
+        q = g["ratio"].to_numpy()
         idx = g.index.to_numpy()
         lo = np.searchsorted(t, t, side="right")  # strictly later readings only
         hi = np.searchsorted(t, t + win, side="right")
         for i in range(len(g)):
-            later = p[lo[i] : hi[i]]
-            if later.size and np.nanmin(later) < p[i]:
+            sl = slice(lo[i], hi[i])
+            if np.any((p[sl] < p[i]) & (q[sl] > q[i])):
                 keep[idx[i]] = False
     return r.loc[keep]
 

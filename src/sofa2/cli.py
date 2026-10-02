@@ -34,6 +34,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the CLI; returns the process exit code."""
     args = _parser().parse_args(argv)
     overrides = {"pipeline": {"missing": {"strategy": args.missing}}} if args.missing else None
     cfg = load_config(args.sofa2_config, args.sofa1_config, args.pipeline_config, overrides)

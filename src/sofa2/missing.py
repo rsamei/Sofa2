@@ -31,33 +31,38 @@ IMPUTED = "imputed_normal"
 MISSING = "missing"
 
 
-def apply_missing(win: pd.DataFrame, hourly: pd.DataFrame, organs, pcfg: dict) -> pd.DataFrame:
+def apply_missing(
+    win: pd.DataFrame, hourly: pd.DataFrame, sources: dict[str, list[str]], pcfg: dict
+) -> pd.DataFrame:
     """Fill missing organ scores in ``win`` and add ``<organ>_status`` columns.
 
     Args:
         win: windowed scores with stay_id, hr_first and one column per organ.
-        hourly: hourly measurement-based organ points (indexed by stay_id, hr), one column per
-            organ, used as the source of carried values.
-        organs: organ column names.
+        hourly: hourly table (indexed by stay_id, hr) holding the measurement columns.
+        sources: organ -> hourly columns with points of single measured variables. Each
+            variable is carried separately (its own last value and time); the organ takes the
+            worst carried variable.
         pcfg: pipeline config.
     """
     strategy = pcfg["missing"]["strategy"]
     max_h = float(pcfg["missing"]["locf_max_hours"])
     w = win.copy()
     prev = pd.MultiIndex.from_arrays([w["stay_id"], w["hr_first"] - 1])
-    for organ in organs:
-        obs = w[organ].notna()
+    for organ, cols in sources.items():
+        obs = w[organ].notna().to_numpy()
         status = np.where(obs, OBSERVED, MISSING).astype(object)
         vals = w[organ].to_numpy(dtype=float).copy()
         if strategy == "locf":
-            lo = last_observed(hourly, organ).reindex(prev)
-            last_hr = lo["last_hr"].to_numpy()
-            last_val = lo["last_val"].to_numpy()
-            with np.errstate(invalid="ignore"):
-                carry = ~obs.to_numpy() & ~np.isnan(last_hr) & (
-                    w["hr_first"].to_numpy() - last_hr <= max_h
-                )
-            vals[carry] = last_val[carry]
+            carried = np.full(len(w), np.nan)
+            for col in cols:
+                lo = last_observed(hourly, col).reindex(prev)
+                last_hr = lo["last_hr"].to_numpy()
+                last_val = lo["last_val"].to_numpy()
+                with np.errstate(invalid="ignore"):
+                    ok = ~np.isnan(last_hr) & (w["hr_first"].to_numpy() - last_hr <= max_h)
+                carried = np.where(ok, np.fmax(carried, last_val), carried)
+            carry = ~obs & ~np.isnan(carried)
+            vals[carry] = carried[carry]
             status[carry] = CARRIED
         if strategy in ("locf", "normal"):
             rest = status == MISSING
