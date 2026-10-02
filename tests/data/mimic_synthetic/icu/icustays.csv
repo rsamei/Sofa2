@@ -1,0 +1,3 @@
+subject_id,hadm_id,stay_id,first_careunit,last_careunit,intime,outtime,los
+10,100,1000,MICU,MICU,2150-01-01 00:00:00,2150-01-03 00:00:00,2.0
+20,200,2000,CVICU,CVICU,2150-01-01 00:00:00,2150-01-02 00:00:00,1.0

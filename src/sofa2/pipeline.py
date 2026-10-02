@@ -94,3 +94,25 @@ def compute_scores(
             if result[c].notna().all() and np.allclose(result[c], result[c].round()):
                 result[c] = result[c].astype(int)
     return result.sort_values(["stay_id", "window_index"]).reset_index(drop=True)
+
+
+def compute_scores_batched(
+    adapter, batch_size: int = 2000, stay_ids: Iterable[int] | None = None, **kwargs
+) -> pd.DataFrame:
+    """Score stays in batches to bound memory (eg all of MIMIC-IV).
+
+    Args:
+        adapter: an adapter with ``stay_ids()`` and ``load(stay_ids=...)``
+            (eg :class:`sofa2.adapters.mimic_iv.MimicIVAdapter`).
+        batch_size: stays per batch.
+        stay_ids: stays to score (default: all stays of the adapter).
+        **kwargs: passed to :func:`compute_scores`.
+    """
+    ids = list(stay_ids) if stay_ids is not None else list(adapter.stay_ids())
+    parts = [
+        compute_scores(adapter.load(stay_ids=ids[i : i + batch_size]), **kwargs)
+        for i in range(0, len(ids), batch_size)
+    ]
+    if not parts:
+        raise ValueError("no stays to score")
+    return pd.concat(parts, ignore_index=True)
